@@ -461,7 +461,14 @@ static int run(void) {
 		return 1;
 	}
 
-	setenv("TERM", "vt100", 1);
+	/* configure environment */
+	setenv("TERM", "vt100-bakey", 1);
+#ifdef DEBUG
+	static char termpathbuf[PATH_MAX];
+	realpath("./terminfo", termpathbuf);
+
+	setenv("TERMINFO", termpathbuf, 1);
+#endif
 
 	/* initialize sdl */
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
