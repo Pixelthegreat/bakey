@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+#
+# Author: Elliot Kohlmyer
+# Date: September 24th, 2025
+# Purpose: Print a color chart / test pattern
+#
+import enum
+import argparse
+
+# constants #
+PROGNAME='color-chart'
+
+# mode #
+class Mode(enum.Enum):
+    INDEXED = 0
+    RGB = enum.auto()
+    BOTH = enum.auto()
+
+    COUNT = enum.auto()
+
+# print indexed palette chart #
+def print_indexed(cramped=False):
+    s = ''
+    for y in range(16):
+        if not cramped and y: s += '\n'
+        for x in range(16):
+            i = y * 16 + x
+            if x and not cramped: s += ' '
+            s += f'\x1b[48;5;{i}m{str(i).rjust(3)}\x1b[49m'
+        s += '\n'
+    print(s, end='')
+
+# print rgb chart #
+def print_rgb(cramped=False):
+    s = ''
+    for y in range(16):
+        if not cramped and y: s += '\n'
+        for x in range(16):
+            i = y * 16 + x
+            r, g, b = x * 16, (15 - x) * 16, y * 16
+            if x and not cramped: s += ' '
+            s += f'\x1b[48;2;{r};{g};{b}m{str(i).rjust(3)}\x1b[49m'
+        s += '\n'
+    print(s, end='')
+
+# main #
+def main():
+    parser = argparse.ArgumentParser(
+            prog=PROGNAME,
+            description='Prints a color chart / test pattern'
+            )
+    parser.add_argument('-m', '--mode', metavar='indexed|rgb|both')
+    parser.add_argument('-c', '--cramped', action='store_true')
+
+    # parse arguments #
+    args = parser.parse_args()
+
+    mode = Mode.INDEXED
+    if args.mode is not None:
+        try: mode = Mode[args.mode.upper()]
+        except KeyError:
+            parser.print_usage()
+            exit(1)
+
+    # display chart #
+    if mode in (Mode.INDEXED, Mode.BOTH):
+        print_indexed(args.cramped)
+    if mode in (Mode.RGB, Mode.BOTH):
+        print_rgb(args.cramped)
+
+if __name__ == '__main__':
+    main()

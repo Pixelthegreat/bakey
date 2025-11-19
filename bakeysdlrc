@@ -1,0 +1,58 @@
+#
+# Example configuration for Bakey SDL
+#
+# Please see include/bakey-config.h for more
+# information on specific fields.
+#
+
+# == STYLE == #
+background = #16161a
+foreground = #d7e0fe
+
+# Black #
+color0 = #202126
+color8 = #383a42
+
+# Red #
+color1 = #bd608f
+color9 = #eeaacc
+
+# Green #
+color2 = #8fbd60
+color10 = #cceeaa
+
+# Yellow #
+color3 = #bd8f60
+color11 = #eeccaa
+
+# Blue #
+color4 = #608fbd
+color12 = #aaccee
+
+# Magenta #
+color5 = #8f60bd
+color13 = #ccaaee
+
+# Cyan #
+color6 = #60bd8f
+color14 = #aaeecc
+
+# White #
+color7 = #aeb5cd
+color15 = #d7e0fe
+
+# == BAKEY-SDL == #
+sdl_title = Bakey
+sdl_width = 640
+sdl_height = 408
+sdl_background = #0e0f10
+
+sdl_font_face = monospace
+sdl_font_size = 14
+
+sdl_cursor_mode = inverted
+sdl_cursor_flash_interval = 0.625
+sdl_cursor_flash_count = 8
+
+sdl_locale = en_US.UTF8
+sdl_shell = bash
