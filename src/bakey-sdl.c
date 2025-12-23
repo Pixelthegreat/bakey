@@ -617,7 +617,7 @@ static int run(void) {
 
 		/* update terminal */
 		if (bakey_update(&context) != BAKEY_RESULT_SUCCESS)
-			return BAKEY_RESULT_FAILURE;
+			return 1;
 
 		if (context.display_updated) {
 
