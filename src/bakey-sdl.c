@@ -236,6 +236,9 @@ static void sigh_alrm() {
 }
 
 /* launch process */
+#define LAUNCHERRBUFSZ 256
+static char launcherrbuf[LAUNCHERRBUFSZ];
+
 static int launch(const char *prog, const char **argv) {
 
 	const char *path = ptsname(pty);
@@ -262,7 +265,7 @@ static int launch(const char *prog, const char **argv) {
 	/* run program */
 	if (execvp(prog, (char *const *)argv) < 0) {
 
-		perror("execvp");
+		snprintf(launcherrbuf, LAUNCHERRBUFSZ, "execvp: %s", strerror(errno));
 		return -1;
 	}
 	return 0;
@@ -442,7 +445,7 @@ static int run(void) {
 
 #ifdef BAKEY_RC
 	if (load_config() < 0)
-		return -1;
+		return 1;
 #endif
 
 	/* configure locale and signals */
@@ -616,8 +619,11 @@ static int run(void) {
 		}
 
 		/* update terminal */
-		if (bakey_update(&context) != BAKEY_RESULT_SUCCESS)
+		if (bakey_update(&context) != BAKEY_RESULT_SUCCESS) {
+
+			fprintf(stderr, "Bakey: %s\n", bakey_get_error());
 			return 1;
+		}
 
 		if (context.display_updated) {
 
@@ -671,7 +677,8 @@ static int run(void) {
 
 		/* manage shell process */
 		int wstatus;
-		if (waitpid(shell_pid, &wstatus, WCONTINUED | WNOHANG) >= 0 && WIFEXITED(wstatus)) {
+		if (waitpid(shell_pid, &wstatus, WCONTINUED | WNOHANG) == shell_pid &&
+		    WIFEXITED(wstatus)) {
 
 			running = false;
 			shell_pid = -1;
@@ -682,6 +689,8 @@ static int run(void) {
 
 /* clean up resources */
 static void cleanup(void) {
+
+	if (*launcherrbuf) fprintf(stderr, "%s\n", launcherrbuf);
 
 	if (shell_pid >= 0) kill(shell_pid, SIGKILL);
 	if (context.init) bakey_close(&context);

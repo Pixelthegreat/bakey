@@ -1,5 +1,5 @@
 #
-# Example configuration for Bakey SDL
+# Example configuration for Bakey WL
 #
 # Please see include/bakey-config.h for more
 # information on specific fields.
@@ -41,18 +41,13 @@ color14 = #aaeecc
 color7 = #aeb5cd
 color15 = #d7e0fe
 
-# == BAKEY-SDL == #
-sdl_title = Bakey
-sdl_width = 640
-sdl_height = 408
-sdl_background = #0e0f10
+# == BAKEY-WL == #
+wl_width = 640
+wl_height = 408
+wl_background = #0e0f10
 
-sdl_font_face = DejaVu Sans Mono
-sdl_font_size = 14
+wl_font_face = /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+wl_font_size = 10.7
 
-sdl_cursor_mode = inverted
-sdl_cursor_flash_interval = 0.625
-sdl_cursor_flash_count = 8
-
-sdl_locale = en_US.UTF8
-sdl_shell = bash
+wl_locale = en_US.UTF8
+wl_shell = bash

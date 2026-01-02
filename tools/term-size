@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+#
+# Author: Elliot Kohlmyer
+# Date: December 24th, 2025
+# Purpose: Get the size of a terminal
+#
+import os
+
+def main():
+    size = os.get_terminal_size()
+    print(f'Width: {size.columns}, Height: {size.lines}')
+
+if __name__ == '__main__':
+    main()

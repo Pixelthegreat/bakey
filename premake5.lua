@@ -117,7 +117,10 @@ if contains_value(bakey_enable_implementations, 'wl') then
 		       'src/bakey-xdg-shell.c',
 		       'include/bakey-wl-config.h',
 		       'include/bakey-xdg-shell.h'}
+		optimize 'Speed'
+		buildoptions {'`pkg-config --cflags freetype2`'}
 		links {'bakey', 'wayland-client', 'xkbcommon'}
+		linkoptions {'`pkg-config --libs freetype2`'}
 		targetdir 'bin'
 
 		defines {'_DEFAULT_SOURCE'}

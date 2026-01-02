@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <errno.h>
 #include <locale.h>
 #include <ctype.h>
 #include <time.h>
@@ -19,6 +20,8 @@
 #include <wayland-client.h>
 #include <bakey-xdg-shell.h>
 #include <xkbcommon/xkbcommon.h>
+#include <ft2build.h>
+#include FT_FREETYPE_H
 
 #define BAKEY_CONFIG_IMPL
 #include <bakey-config.h>
@@ -34,10 +37,15 @@ static pid_t shell_pid = -1;
 static bool display_updated = true;
 static bool running = true;
 static bool draw = true;
-static bool shifted = false;
 static bool ctrled = false;
 
-static size_t fwidth = 9, fheight = 16;
+static size_t fwidth, fheight;
+
+static size_t cursor_flash_count = 0;
+static bool cursor_visible = true;
+static bool cursor_updated = true;
+static uint64_t cursor_flash_interval = 0;
+static uint64_t cursor_flash_time = 0;
 
 /* wayland stuff */
 static size_t width, height;
@@ -62,6 +70,12 @@ static struct xkb_state *xkb_state;
 static int keymap_fd = -1;
 static void *keymap_data;
 static size_t keymap_size;
+static xkb_keysym_t key_held_recent;
+static uint32_t key_held_recent_code;
+static uint64_t key_repeat_time;
+static size_t key_repeat_count;
+static uint64_t key_repeat_rate = 25000000;
+static uint64_t key_repeat_delay = 500000000;
 
 static struct wl_shm_pool *wl_shm_pool;
 static struct wl_buffer *wl_buffer_shm;
@@ -69,7 +83,16 @@ static int shm_fd = -1;
 static void *shm_data;
 static size_t shm_size;
 
+static FT_Library ft_library;
+static bool init_ft_library = false;
+static FT_Face ft_face;
+
 static bool frame_ready = false;
+
+/* glyph cache */
+static uint8_t *glyph_cache;
+static size_t glyph_count;
+static uint8_t *glyph_write;
 
 /* bakey context */
 static bakey_display_t display;
@@ -113,6 +136,8 @@ static bakey_result_t term_open(void) {
 
 	/* open slave */
 	const char *path = ptsname(pty);
+	printf("PT path: %s\n", path);
+
 	spty = open(path, O_RDWR);
 
 	if (spty < 0) {
@@ -198,6 +223,26 @@ static bakey_result_t handle_key(const char *key, const char *value) {
 			return BAKEY_RESULT_FAILURE;
 	}
 
+	/* cursor settings */
+	else if (!strcmp(key, "wl_cursor_mode")) {
+
+		if (!strcmp(value, "inverted"))
+			bakey_wl_config.cursor_mode = BAKEY_WL_CURSOR_MODE_INVERTED;
+	}
+
+	else if (!strcmp(key, "wl_cursor_flash_interval"))
+		bakey_wl_config.cursor_flash_interval = (float)atof(value);
+
+	else if (!strcmp(key, "wl_cursor_flash_count"))
+		bakey_wl_config.cursor_flash_count = (size_t)atoi(value);
+
+	/* font settings */
+	else if (!strcmp(key, "wl_font_face"))
+		strncpy(bakey_wl_config.font_face, value, BAKEY_WL_CONFIG_STRING_SIZE);
+
+	else if (!strcmp(key, "wl_font_size"))
+		bakey_wl_config.font_size = (float)atof(value);
+
 	/* miscellaneous settings */
 	else if (!strcmp(key, "wl_locale"))
 		strncpy(bakey_wl_config.locale, value, BAKEY_WL_CONFIG_STRING_SIZE);
@@ -236,6 +281,51 @@ static void sigh_alrm() {
 	draw = true;
 }
 
+/* launch process */
+#define LAUNCHERRBUFSZ 256
+static char launcherrbuf[LAUNCHERRBUFSZ];
+
+static int launch(const char *prog, const char **argv) {
+
+	const char *path = ptsname(pty);
+
+	if (setsid() < 0) {
+
+		perror("setsid");
+		return -1;
+	}
+
+	int mpty = open(path, O_RDWR);
+	if (mpty < 0) {
+
+		perror("open");
+return -1;
+	}
+
+	dup2(mpty, 0);
+	dup2(mpty, 1);
+	dup2(mpty, 2);
+
+	close(mpty);
+
+	/* run program */
+	if (execvp(prog, (char *const *)argv) < 0) {
+
+		snprintf(launcherrbuf, LAUNCHERRBUFSZ, "execvp: %s", strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
+/* reset cursor state */
+static void reset_cursor(void) {
+
+	cursor_flash_time = 0;
+	cursor_visible = true;
+	cursor_flash_count = bakey_wl_config.cursor_flash_count;
+	cursor_updated = true;
+}
+
 /* registry listener */
 static void registry_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version);
 static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t id);
@@ -260,6 +350,19 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t i
 
 /* remove interface */
 static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t id) {
+}
+
+/* xdg wm base listener */
+static void wm_base_ping(void *data, struct xdg_wm_base *wm_base, uint32_t ping);
+
+static struct xdg_wm_base_listener wm_base_listener = {
+	.ping = wm_base_ping,
+};
+
+/* respond to ping */
+static void wm_base_ping(void *data, struct xdg_wm_base *wm_base, uint32_t ping) {
+
+	xdg_wm_base_pong(xdg_wm_base, ping);
 }
 
 /* xdg surface listener */
@@ -329,23 +432,136 @@ static void keyboard_enter(void *data, struct wl_keyboard *keyboard, uint32_t id
 static void keyboard_leave(void *data, struct wl_keyboard *keyboard, uint32_t id, struct wl_surface *surface) {
 }
 
+/* process key */
+static void process_key(xkb_keysym_t keysym, uint32_t code, uint32_t state) {
+
+	if (keysym == XKB_KEY_Control_L)
+		ctrled = state > 0;
+
+	if (ctrled) {
+
+		if (code >= L'a' && code <= L'z')
+			code -= L'a';
+		if (code >= L'A' && code <= L'Z')
+			code -= L'A';
+		bakey_send_character(&context, (wchar_t)code);
+		return;
+	}
+
+	if (!state) return;
+
+	/* generic keys */
+	switch (keysym) {
+
+		case XKB_KEY_BackSpace: bakey_send_character(&context, L'\x7f'); return;
+		case XKB_KEY_Up: bakey_send_sequence(&context, L"\x1b[A"); return;
+		case XKB_KEY_Down: bakey_send_sequence(&context, L"\x1b[B"); return;
+		case XKB_KEY_Right: bakey_send_sequence(&context, L"\x1b[C"); return;
+		case XKB_KEY_Left: bakey_send_sequence(&context, L"\x1b[D"); return;
+	}
+
+	if (code) bakey_send_character(&context, code);
+}
+
 /* key press or release */
 static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t id, uint32_t time, uint32_t key, uint32_t state) {
 
 	if (!xkb_keymap || !xkb_state) return;
 
 	xkb_keysym_t keysym = xkb_state_key_get_one_sym(xkb_state, (xkb_keycode_t)key + 8);
+	uint32_t code = xkb_state_key_get_utf32(xkb_state, (xkb_keycode_t)key + 8);
 
-	if (keysym == XKB_KEY_Escape)
-		running = false;
+	if (state > 0) {
+
+		key_held_recent = keysym;
+		key_held_recent_code = code;
+		key_repeat_time = 0;
+		key_repeat_count = 0;
+	}
+	else if (keysym == key_held_recent)
+		key_held_recent = XKB_KEY_NoSymbol;
+
+	process_key(keysym, code, state);
+	if (context.display_updated) {
+
+		reset_cursor();
+		display_updated = true;
+	}
 }
 
 /* modifiers */
 static void keyboard_modifiers(void *data, struct wl_keyboard *keyboard, uint32_t id, uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked, uint32_t group) {
+
+	xkb_state_update_mask(xkb_state,
+			      mods_depressed,
+			      mods_latched,
+			      mods_locked,
+			      0, 0, group);
 }
 
 /* repeat rate info */
 static void keyboard_repeat_info(void *data, struct wl_keyboard *keyboard, int rate, int delay) {
+
+	if (!rate || !delay) return;
+
+	key_repeat_rate = 1000000000 / (uint64_t)rate;
+	key_repeat_delay = (uint64_t)delay * 1000000;
+}
+
+/* load glyph cache data */
+static int load_glyph_cache(void) {
+
+	glyph_count = (size_t)ft_face->num_glyphs;
+	glyph_cache = (uint8_t *)malloc(fwidth * fheight * glyph_count * 4);
+	glyph_write = (uint8_t *)malloc(fwidth * fheight * 4);
+
+	if (!glyph_cache || !glyph_write) {
+
+		fprintf(stderr, "Can't allocate glyph cache\n");
+		return -1;
+	}
+	memset(glyph_cache, 0, fwidth * fheight * glyph_count * 4);
+
+	/* render glyphs */
+	for (size_t i = 1; i < glyph_count; i++) {
+
+		uint8_t *data = glyph_cache + i * fwidth * fheight * 4;
+
+		if (FT_Load_Glyph(ft_face, (FT_UInt)i, FT_LOAD_DEFAULT))
+			continue;
+
+		if (FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL))
+			continue;
+
+		size_t x = ft_face->glyph->bitmap_left;
+		if (x >= fwidth) continue;
+
+		size_t w = ft_face->glyph->bitmap.width;
+		if (x+w > fwidth) w = fwidth - x;
+
+		size_t y = ft_face->size->metrics.y_ppem -
+			   ft_face->glyph->bitmap_top;
+		if (y >= fheight) continue;
+
+		size_t h = ft_face->glyph->bitmap.rows;
+		if (y+h > fheight) h = fheight - y;
+
+		for (size_t py = 0; py < h; py++) {
+			for (size_t px = 0; px < w; px++) {
+
+				uint8_t value = ft_face->glyph->bitmap.buffer[py *
+					ft_face->glyph->bitmap.pitch + px];
+
+				size_t index = ((y+py) * fwidth + x+px) * 4;
+
+				data[index] = value;
+				data[index + 1] = value;
+				data[index + 2] = value;
+				data[index + 3] = 0xff;
+			}
+		}
+	}
+	return 0;
 }
 
 /* frame callback listener */
@@ -422,10 +638,131 @@ static int update_frame(void) {
 	return 0;
 }
 
+/* fill area of screen */
+static void fill_area(size_t x, size_t y, size_t w, size_t h, bakey_color_t color) {
+
+	uint8_t r = (color >> 16) & 0xff;
+	uint8_t g = (color >> 8) & 0xff;
+	uint8_t b = color & 0xff;
+
+	uint8_t *data = shm_data + (y * width + x) * 4;
+	size_t diff = (width - w) * 4;
+
+	for (size_t py = y; py < y+h; py++, data += diff) {
+		for (size_t px = x; px < x+w; px++) {
+
+			*data++ = b;
+			*data++ = g;
+			*data++ = r;
+			*data++ = 0xff;
+		}
+	}
+}
+
+/* draw character */
+#define BLEND_TABLE_SIZE 16
+#define BLEND_TABLE_SHIFT 4
+
+static bakey_color_t blend_bg, blend_fg;
+static uint8_t blend_table[BLEND_TABLE_SIZE * 4];
+
+static void draw_character(size_t x, size_t y, int cc, bakey_color_t bg, bakey_color_t fg) {
+
+	FT_UInt index = FT_Get_Char_Index(ft_face, cc);
+
+	if (!index) {
+
+		fill_area(x, y, fwidth, fheight, bg);
+		return;
+	}
+
+	/* update blend table */
+	if (bg != blend_bg || fg != blend_fg) {
+
+		uint8_t bgv[4] = {
+			bg & 0xff,
+			(bg >> 8) & 0xff,
+			(bg >> 16) & 0xff,
+			0xff,
+		};
+		uint8_t fgv[4] = {
+			fg & 0xff,
+			(fg >> 8) & 0xff,
+			(fg >> 16) & 0xff,
+			0xff,
+		};
+
+		for (uint32_t i = 0; i < sizeof(blend_table); i++) {
+
+			size_t j = i >> 2;
+			blend_table[i] = (bgv[i & 0x3] * (BLEND_TABLE_SIZE - j) >> (8 - BLEND_TABLE_SHIFT)) +
+					 (fgv[i & 0x3] * j >> (8 - BLEND_TABLE_SHIFT));
+		}
+
+		blend_bg = bg;
+		blend_fg = fg;
+	}
+
+	size_t size = fwidth * fheight * 4;
+	const uint8_t *rdata = glyph_cache + (size_t)index * size;
+
+	uint8_t *wdata = glyph_write;
+	for (size_t i = 0; i < size; i++, wdata++, rdata++)
+		*wdata = blend_table[((*rdata) >> BLEND_TABLE_SHIFT) * 4 + (i & 0x3)];
+
+	wdata = shm_data + (y * width + x) * 4;
+	rdata = glyph_write;
+
+	for (size_t i = 0; i < fheight; i++, wdata += width * 4, rdata += fwidth * 4)
+		memcpy(wdata, rdata, fwidth * 4);
+}
+
 /* draw frame */
+#define SWAP_VALUES(a, b) ({\
+		a ^= b;\
+		b ^= a;\
+		a ^= b;\
+	})
+
 static void draw_frame(void) {
 
-	memset(shm_data, 0xff, shm_size);
+	fill_area(0, 0, width, height, bakey_wl_config.background);
+
+	/* draw character cells */
+	//struct timespec ts_start;
+	//clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_start);
+
+	for (size_t y = 0; y < display.height; y++) {
+		for (size_t x = 0; x < display.width; x++) {
+
+			bakey_cell_t *cell = display.cells + (y * display.width) + x;
+
+			bakey_color_t bg = cell->background;
+			bakey_color_t fg = cell->foreground;
+
+			if (cell->style & BAKEY_STYLE_INVERSE)
+				SWAP_VALUES(bg, fg);
+
+			size_t position = y * display.width + x;
+			if (position == context.position && cursor_visible &&
+			    bakey_wl_config.cursor_mode == BAKEY_WL_CURSOR_MODE_INVERTED)
+				SWAP_VALUES(bg, fg);
+
+			size_t dx = x * fwidth;
+			size_t dy = y * fheight;
+
+			draw_character(dx, dy, cell->character, bg, fg);
+		}
+	}
+
+	//struct timespec ts_end;
+	//clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_end);
+
+	//uint64_t ns_start = (uint64_t)ts_start.tv_sec * 1000000000 + (uint64_t)ts_start.tv_nsec;
+	//uint64_t ns_end = (uint64_t)ts_end.tv_sec * 1000000000 + (uint64_t)ts_end.tv_nsec;
+	//uint64_t ns = ns_end - ns_start;
+
+	//printf("%llu\n", ns);
 }
 
 /* run application */
@@ -451,6 +788,15 @@ static int run(void) {
 		return 1;
 	}
 
+	/* configure environment */
+	setenv("TERM", "vt100-bakey", 1);
+#ifdef DEBUG
+	static char termpathbuf[PATH_MAX];
+	realpath("./terminfo", termpathbuf);
+
+	setenv("TERMINFO", termpathbuf, 1);
+#endif
+
 	/* connect to wayland server */
 	width = bakey_wl_config.width;
 	height = bakey_wl_config.height;
@@ -474,6 +820,7 @@ static int run(void) {
 		fprintf(stderr, "Can't register required Wayland interfaces\n");
 		return 1;
 	}
+	xdg_wm_base_add_listener(xdg_wm_base, &wm_base_listener, NULL);
 
 	/* create surface */
 	wl_surface = wl_compositor_create_surface(wl_compositor);
@@ -540,6 +887,40 @@ static int run(void) {
 
 	if (update_frame() < 0) return 1;
 
+	/* initialize freetype */
+	if (FT_Init_FreeType(&ft_library)) {
+
+		fprintf(stderr, "Can't initialize FreeType\n");
+		return 1;
+	}
+	init_ft_library = true;
+
+	if (FT_New_Face(ft_library, bakey_wl_config.font_face, 0, &ft_face)) {
+
+		fprintf(stderr, "Can't load FreeType font face\n");
+		return 1;
+	}
+
+	if (FT_Set_Char_Size(ft_face, 0, (FT_F26Dot6)(bakey_wl_config.font_size * 64.f), 96, 96)) {
+
+		fprintf(stderr, "Can't set FreeType font size\n");
+		return 1;
+	}
+
+	FT_UInt index = FT_Get_Char_Index(ft_face, L'W');
+	FT_Load_Glyph(ft_face, index, FT_LOAD_DEFAULT);
+	FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL);
+
+	fwidth = (size_t)(ft_face->glyph->bitmap_left + ft_face->glyph->bitmap.width);
+	fheight = (size_t)(ft_face->glyph->bitmap.rows + ft_face->size->metrics.y_ppem - ft_face->glyph->bitmap_top);
+
+	fwidth = ft_face->glyph->advance.x >> 6;
+	fheight = ft_face->size->metrics.height >> 6;
+
+	/* load glyph cache */
+	if (load_glyph_cache() < 0)
+		return 1;
+
 	/* initialize bakey */
 	display.width = width / fwidth;
 	display.height = height / fheight;
@@ -550,6 +931,22 @@ static int run(void) {
 		fprintf(stderr, "Bakey: %s\n", bakey_get_error());
 		return 1;
 	}
+
+	/* create shell process */
+	pid_t pid = fork();
+	if (pid < 0) {
+
+		perror("fork");
+		return 1;
+	}
+	else if (!pid) {
+
+		const char *shell_argv[] = {bakey_wl_config.shell, NULL};
+		if (launch(bakey_wl_config.shell, shell_argv) < 0)
+			_exit(1);
+		_exit(0);
+	}
+	else shell_pid = pid;
 
 	/* set frame timer */
 	struct itimerval it = {
@@ -565,6 +962,13 @@ static int run(void) {
 	setitimer(ITIMER_REAL, &it, NULL);
 
 	/* main loop */
+	cursor_flash_interval = (uint64_t)(bakey_wl_config.cursor_flash_interval * 1000000000.f);
+	cursor_flash_time = 0;
+	cursor_flash_count = bakey_wl_config.cursor_flash_count;
+
+	struct timespec ts_last;
+	clock_gettime(CLOCK_REALTIME, &ts_last);
+
 	while (running) {
 
 		/* update terminal attributes */
@@ -593,8 +997,11 @@ static int run(void) {
 		if (bakey_update(&context) != BAKEY_RESULT_SUCCESS)
 			return 1;
 
-		if (context.display_updated)
+		if (context.display_updated) {
+
+			reset_cursor();
 			display_updated = true;
+		}
 
 		if (draw) {
 
@@ -630,7 +1037,8 @@ static int run(void) {
 			}
 
 			/* draw frame */
-			if (display_updated && frame_ready) {
+			if ((cursor_updated || display_updated) &&
+			    frame_ready) {
 
 				draw_frame();
 
@@ -643,6 +1051,59 @@ static int run(void) {
 				frame_ready = false;
 				display_updated = false;
 			}
+			cursor_updated = false;
+
+			/* get frame time */
+			struct timespec ts_current;
+			clock_gettime(CLOCK_REALTIME, &ts_current);
+
+			uint64_t ns_last = (uint64_t)ts_last.tv_sec * 1000000000 + (uint64_t)ts_last.tv_nsec;
+			uint64_t ns_current = (uint64_t)ts_current.tv_sec * 1000000000 + (uint64_t)ts_current.tv_nsec;
+
+			uint64_t ns_time = ns_current - ns_last;
+			ts_last = ts_current;
+
+			cursor_flash_time += ns_time;
+			key_repeat_time += ns_time;
+
+			/* update cursor */
+			if (cursor_flash_time >= cursor_flash_interval &&
+			    cursor_flash_count) {
+
+				cursor_flash_time %= cursor_flash_interval;
+				cursor_visible = !cursor_visible;
+
+				cursor_flash_count--;
+				cursor_updated = true;
+			}
+
+			/* update key repeat */
+			uint64_t key_repeat_threshold =
+				(!key_repeat_count? key_repeat_delay: key_repeat_rate);
+
+			if (key_held_recent && key_repeat_time >= key_repeat_threshold) {
+
+				key_repeat_time %= key_repeat_threshold;
+				key_repeat_count++;
+
+				process_key(key_held_recent, key_held_recent_code, 1);
+				if (context.display_updated) {
+
+					reset_cursor();
+					display_updated = true;
+				}
+			}
+
+			draw = false;
+		}
+
+		/* manage shell process */
+		int wstatus;
+		if (waitpid(shell_pid, &wstatus, WCONTINUED | WNOHANG) == shell_pid &&
+		    WIFEXITED(wstatus)) {
+
+			running = false;
+			shell_pid = -1;
 		}
 	}
 	return 0;
@@ -651,8 +1112,13 @@ static int run(void) {
 /* clean up resources */
 static void cleanup(void) {
 
+	if (*launcherrbuf) fprintf(stderr, "%s\n", launcherrbuf);
+
 	if (shell_pid >= 0) kill(shell_pid, SIGKILL);
 	if (context.init) bakey_close(&context);
+	if (glyph_write) free(glyph_write);
+	if (glyph_cache) free(glyph_cache);
+	if (init_ft_library) FT_Done_FreeType(ft_library);
 	if (xkb_state) xkb_state_unref(xkb_state);
 	if (xkb_keymap) xkb_keymap_unref(xkb_keymap);
 	if (keymap_data) munmap(keymap_data, keymap_size);
