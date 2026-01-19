@@ -104,13 +104,13 @@ static void remove_lines(bakey_context_t *context, size_t start, size_t lines) {
 /* scroll down by line count */
 static void scroll_down(bakey_context_t *context, size_t lines) {
 
-	remove_lines(context, 0, lines);
+	insert_lines(context, 0, lines);
 }
 
 /* scroll up by line count */
 static void scroll_up(bakey_context_t *context, size_t lines) {
 
-	insert_lines(context, 0, lines);
+	remove_lines(context, 0, lines);
 }
 
 /* auto-scroll view */
@@ -118,22 +118,17 @@ static void scroll_view(bakey_context_t *context) {
 
 	bakey_display_t *display = context->backend.display;
 
-	if (context->position >= context->scroll_end * display->width) {
+	if ((context->position >= context->scroll_end * display->width &&
+	     context->old_position < context->scroll_end * display->width) ||
+	    context->position >= display->width * display->height) {
 
-		/* normal scroll */
-		if (context->scroll_end == display->height) {
+		scroll_up(context, 1);
+		context->position = display->width * (context->scroll_end - 1);
+		context->old_position = context->position;
 
-			scroll_down(context, 1);
-			context->position = (display->width * display->height) - display->width;
-
-			if (context->internal.input_pos >= display->width)
-				context->internal.input_pos -= display->width;
-			else context->internal.input_pos = 0;
-		}
-
-		/* just move the cursor otherwise */
-		else if (context->position >= display->width * display->height)
-			context->position = (display->width * display->height) - display->width;
+		if (context->internal.input_pos >= display->width)
+			context->internal.input_pos -= display->width;
+		else context->internal.input_pos = 0;
 	}
 }
 
@@ -146,53 +141,82 @@ static void print_character(bakey_context_t *context, wchar_t wc) {
 	if (!wc) return;
 
 	/* print character */
-	if (wc == '\n') {
+	if (wc == L'\n') {
 
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+		printf("\\n\n");
+#endif
 		SCROLL_VIEW_NONCANON(context);
+		context->old_position = context->position;
 		context->position += display->width - (context->position % display->width);
 	}
 
-	else if (wc == '\r')
-		context->position -= context->position % display->width;
+	else if (wc == L'\r') {
 
-	else if (wc == '\b') {
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+		printf("\\r\n");
+#endif
+		context->position -= context->position % display->width;
+	}
+
+	else if (wc == L'\b') {
+
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+		printf("\\b\n");
+#endif
 		if (context->position) context->position--;
 	}
 
-	else if (wc == '\x07') {
+	else if (wc == L'\x07') {
 
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+		printf("\\x07\n");
+#endif
 		if (context->backend.term_bell)
 			context->backend.term_bell();
 	}
 
-	else if (wc == '\x1b') {
+	else if (wc == L'\x1b') {
 
 		context->state = BAKEY_CONTEXT_STATE_ESCAPE_SEQUENCE;
 		context->internal.sequence_ready = false;
 		context->internal.sequence_pos = 0;
 	}
 
-	else if (wc == '\x7f') {
+	else if (wc == L'\x7f') {
 
-		bakey_cell_t *cell = display->cells + context->position;
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+		printf("\\x7f\n");
+#endif
+		if (context->position < display->width * display->height) {
 
-		cell->character = 0;
-		cell->background = context->style.background;
-		cell->foreground = context->style.foreground;
-		cell->style = context->style.flags;
+			bakey_cell_t *cell = display->cells + context->position;
+
+			cell->character = 0;
+			cell->background = context->style.background;
+			cell->foreground = context->style.foreground;
+			cell->style = context->style.flags;
+		}
 	}
 
-	else {
+	else if (wc >= L' ') {
 
 		SCROLL_VIEW_NONCANON(context);
+		if (context->position < display->width * display->height) {
 
-		bakey_cell_t *cell = display->cells + context->position++;
+			context->old_position = context->position;
+			bakey_cell_t *cell = display->cells + context->position++;
 
-		cell->character = wc;
-		cell->background = context->style.background;
-		cell->foreground = context->style.foreground;
-		cell->style = context->style.flags;
+			cell->character = wc;
+			cell->background = context->style.background;
+			cell->foreground = context->style.foreground;
+			cell->style = context->style.flags;
+		}
 	}
+
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+	else printf("%d\n", (int)wc);
+#endif
 
 	/* scroll view */
 	if (context->control.flags & BAKEY_CONTROL_FLAG_CANONICAL)
@@ -449,6 +473,7 @@ static void command_H(bakey_context_t *context, const char *sequence, size_t len
 	if (sx >= display->width) sx = display->width - 1;
 
 	context->position = sy * display->width + sx;
+	context->old_position = context->position;
 }
 
 /* erase screen */
@@ -526,6 +551,9 @@ static void command_K(bakey_context_t *context, const char *sequence, size_t len
 		default: return;
 	}
 
+	if (end > display->width * display->height)
+		end = display->width * display->height;
+
 	for (size_t i = start; i < end; i++) {
 
 		bakey_cell_t *cell = display->cells + i;
@@ -549,8 +577,11 @@ static void command_A(bakey_context_t *context, const char *sequence, size_t len
 	(void)to_int(sequence+1, &num);
 	if (num <= 0) num = 1;
 
-	if (context->position >= display->width * (size_t)num)
+	if (context->position >= display->width * (size_t)num) {
+
 		context->position -= display->width * (size_t)num;
+		context->old_position = context->position;
+	}
 
 	context->display_updated = true;
 }
@@ -566,8 +597,11 @@ static void command_B(bakey_context_t *context, const char *sequence, size_t len
 	if (num <= 0) num = 1;
 
 	if (display->height >= (size_t)num &&
-	    context->position < (display->height - (size_t)num) * display->width)
+	    context->position < (display->height - (size_t)num) * display->width) {
+
 		context->position += (size_t)num * display->width;
+		context->old_position = context->position;
+	}
 
 	context->display_updated = true;
 }
@@ -583,8 +617,11 @@ static void command_C(bakey_context_t *context, const char *sequence, size_t len
 	if (num <= 0) num = 1;
 
 	if (display->width >= (size_t)num &&
-	    (context->position % display->width) < display->width - (size_t)num)
+	    (context->position % display->width) < display->width - (size_t)num) {
+
 		context->position += (size_t)num;
+		context->old_position = context->position;
+	}
 
 	context->display_updated = true;
 }
@@ -599,8 +636,11 @@ static void command_D(bakey_context_t *context, const char *sequence, size_t len
 	(void)to_int(sequence+1, &num);
 	if (num <= 0) num = 1;
 
-	if ((context->position % display->width) >= (size_t)num)
+	if ((context->position % display->width) >= (size_t)num) {
+
 		context->position -= (size_t)num;
+		context->old_position = context->position;
+	}
 
 	context->display_updated = true;
 }
@@ -619,6 +659,7 @@ static void command_E(bakey_context_t *context, const char *sequence, size_t len
 
 		context->position += (size_t)num * display->width;
 		context->position -= (context->position % display->width);
+		context->old_position = context->position;
 	}
 
 	context->display_updated = true;
@@ -637,6 +678,7 @@ static void command_F(bakey_context_t *context, const char *sequence, size_t len
 
 		context->position -= display->width * (size_t)num;
 		context->position -= (context->position % display->width);
+		context->old_position = context->position;
 	}
 
 	context->display_updated = true;
@@ -651,8 +693,11 @@ static void command_G(bakey_context_t *context, const char *sequence, size_t len
 	int num;
 	(void)to_int(sequence+1, &num);
 
-	if ((size_t)num < display->width)
+	if ((size_t)num < display->width) {
+
 		context->position = (context->position - (context->position % display->width)) + (size_t)num;
+		context->old_position = context->position;
+	}
 
 	context->display_updated = true;
 }
@@ -697,8 +742,11 @@ static void command_7(bakey_context_t *context, const char *sequence, size_t len
 /* restore cursor position */
 static void command_8(bakey_context_t *context, const char *sequence, size_t length) {
 
-	if (context->saved.npositions)
+	if (context->saved.npositions) {
+
 		context->position = context->saved.positions[--context->saved.npositions];
+		context->old_position = context->position;
+	}
 
 	context->display_updated = true;
 }
@@ -785,22 +833,23 @@ static void command_L(bakey_context_t *context, const char *sequence, size_t len
 static void command_r(bakey_context_t *context, const char *sequence, size_t length) {
 
 	if (*sequence != '[') return;
+	bakey_display_t *display = context->backend.display;
 
 	size_t pos = 1;
 
-	int top = 1, bottom = 1;
+	int top = 1, bottom = display->height;
 	pos += get_next_int(sequence + pos, &top);
 	if (top < 1) top = 1;
 
 	pos += get_next_int(sequence + pos, &bottom);
-	if (bottom < 1) bottom = 1;
+	if (bottom < 1) bottom = display->height;
 
 	size_t scroll_start = (size_t)top - 1;
-	size_t scroll_end = (size_t)bottom - 1;
+	size_t scroll_end = (size_t)bottom;
 
 	if (scroll_start >= scroll_end ||
-	    scroll_start >= context->backend.display->height ||
-	    scroll_end >= context->backend.display->width)
+	    scroll_start >= display->height ||
+	    scroll_end > display->height)
 		return;
 
 	context->scroll_start = scroll_start;
@@ -866,6 +915,10 @@ static void interpret_sequence(bakey_context_t *context) {
 
 	const char *sequence = context->internal.sequencebuf;
 	size_t length = context->internal.sequence_pos;
+
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+	printf("%.*s\n", length, sequence);
+#endif
 
 	if (!length) return;
 	char command = sequence[--length];
@@ -937,6 +990,7 @@ BAKEY_API bakey_result_t bakey_open(bakey_context_t *context) {
 	}
 
 	context->position = 0;
+	context->old_position = 0;
 	context->scroll_start = 0;
 	context->scroll_end = context->backend.display->height;
 	context->display_updated = false;
@@ -983,6 +1037,7 @@ BAKEY_API void bakey_adjust(bakey_context_t *context) {
 	if (!context || !context->init) return;
 
 	context->position = 0;
+	context->old_position = 0;
 	context->internal.width = context->backend.display->width;
 	context->internal.height = context->backend.display->height;
 }
@@ -1008,14 +1063,14 @@ BAKEY_API bakey_result_t bakey_update(bakey_context_t *context) {
 						   BAKEY_CONTEXT_READBUFSZ);
 
 		size_t pos = 0;
-		while (pos < nread) {
+		for (; pos < nread; pos++) {
 
 			wchar_t wc;
 			int nbytes = mbtowc(&wc, context->internal.readbuf + pos, nread - pos);
-			if (nbytes <= 0) break;
+			if (nbytes < 1) continue;
 
 			process_character(context, wc);
-			pos += (size_t)nbytes;
+			pos += (size_t)nbytes-1;
 		}
 	}
 
@@ -1059,8 +1114,11 @@ BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc) {
 		/* newline */
 		case '\r':
 			if ((context->control.flags & BAKEY_CONTROL_FLAG_ECHO) &&
-			    context->internal.write_pos)
+			    context->internal.write_pos) {
+
 				context->position = context->internal.input_pos;
+				context->old_position = context->position;
+			}
 
 			add_to_writebuf(context, '\r');
 

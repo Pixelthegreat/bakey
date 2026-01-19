@@ -86,6 +86,7 @@ typedef enum bakey_control_character {
 typedef struct bakey_context {
 	bool init;
 	size_t position;
+	size_t old_position;
 	size_t scroll_start; /* start of scroll region */
 	size_t scroll_end; /* end of scroll region */
 	bool display_updated;

@@ -23,6 +23,16 @@ end
 
 -- Options --
 newoption {
+	trigger = 'enable-asan',
+	description = 'Enable address sanitization',
+}
+
+newoption {
+	trigger = 'enable-escape-sequence-debug',
+	description = 'Enable debug printing of escape sequences and special characters',
+}
+
+newoption {
 	trigger = 'enable-bakey-rc',
 	description = 'Enable RC extension',
 }
@@ -34,7 +44,7 @@ newoption {
 }
 
 -- Implementations --
-bakey_enable_implementations = {'dummy', 'sdl', 'wl'}
+bakey_enable_implementations = {'dummy', 'reference', 'sdl', 'wl'}
 
 newoption {
 	trigger = 'enable-implementations',
@@ -65,11 +75,17 @@ filter 'configurations:release'
 	defines {'NDEBUG'}
 	optimize 'on'
 
+filter 'options:enable-asan'
+	sanitize 'Address'
+
 -- Bakey --
 project 'bakey'
 	kind 'StaticLib'
 	files {'src/bakey.c', 'include/bakey.h', 'include/bakey-config.h'}
 	targetdir 'lib'
+
+	filter 'options:enable-escape-sequence-debug'
+		defines {'BAKEY_ESCAPE_SEQUENCE_DEBUG'}
 
 -- Bakey RC extension --
 project 'bakey-rc'
@@ -80,52 +96,13 @@ project 'bakey-rc'
 	filter 'not options:enable-bakey-rc'
 		kind 'None'
 
--- Bakey dummy backend implementation --
-if contains_value(bakey_enable_implementations, 'dummy') then
+-- Escape sequence tests --
+project 'test'
+	kind 'ConsoleApp'
+	files {'src/test.c'}
+	targetdir 'bin'
 
-	project 'bakey-dummy'
-		kind 'ConsoleApp'
-		files {'src/bakey-dummy.c'}
-		links {'bakey'}
-		targetdir 'bin'
-end
-
--- Bakey SDL backend implementation --
-if contains_value(bakey_enable_implementations, 'sdl') then
-
-	project 'bakey-sdl'
-		kind 'WindowedApp'
-		files {'src/bakey-sdl.c', 'include/bakey-sdl-config.h'}
-		buildoptions {'`pkg-config --cflags pangocairo`'}
-		links {'bakey', 'SDL2main', 'SDL2'}
-		linkoptions {'`pkg-config --libs pangocairo`'}
-		targetdir 'bin'
-
-		defines {'_DEFAULT_SOURCE'}
-
-		filter 'options:enable-bakey-rc'
-			links {'bakey-rc'}
-			defines {'BAKEY_RC'}
-end
-
--- Bakey Wayland backend implementation --
-if contains_value(bakey_enable_implementations, 'wl') then
-
-	project 'bakey-wl'
-		kind 'WindowedApp'
-		files {'src/bakey-wl.c',
-		       'src/bakey-xdg-shell.c',
-		       'include/bakey-wl-config.h',
-		       'include/bakey-xdg-shell.h'}
-		optimize 'Speed'
-		buildoptions {'`pkg-config --cflags freetype2`'}
-		links {'bakey', 'wayland-client', 'xkbcommon'}
-		linkoptions {'`pkg-config --libs freetype2`'}
-		targetdir 'bin'
-
-		defines {'_DEFAULT_SOURCE'}
-
-		filter 'options:enable-bakey-rc'
-			links {'bakey-rc'}
-			defines {'BAKEY_RC'}
+-- Implementations --
+for i, impl in ipairs(bakey_enable_implementations) do
+	include('impl-' .. impl .. '.lua')
 end

@@ -415,17 +415,19 @@ static void draw_terminal(void) {
 			if (!cell->character || cell->character == ' ') continue;
 
 			char cbuf[MB_CUR_MAX+1];
-			memset(cbuf, 0, MB_CUR_MAX+1);
-			if (wctomb(cbuf, cell->character) < 1) {
+			int nch = wctomb(cbuf, cell->character);
+
+			if (nch < 1) {
 
 				cbuf[0] = '?';
 				cbuf[1] = 0;
 			}
+			else cbuf[nch] = 0;
 
 			cairo_move_to(cr, dx, dy);
 			set_color(color);
 
-			pango_layout_set_text(layout, cbuf, -1);
+			pango_layout_set_text(layout, cbuf, nch);
 			pango_cairo_show_layout(cr, layout);
 		}
 	}
