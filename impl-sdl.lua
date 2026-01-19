@@ -3,7 +3,7 @@ project 'bakey-sdl'
 	kind 'WindowedApp'
 	files {'src/bakey-sdl.c', 'include/bakey-sdl-config.h'}
 	buildoptions {'`pkg-config --cflags pangocairo`'}
-	links {'bakey', 'SDL2main', 'SDL2'}
+	links {'bakey', 'bakey-posix', 'SDL2main', 'SDL2'}
 	linkoptions {'`pkg-config --libs pangocairo`'}
 	targetdir 'bin'
 

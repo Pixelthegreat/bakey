@@ -38,6 +38,11 @@ newoption {
 }
 
 newoption {
+	trigger = 'disable-bakey-posix',
+	description = 'Disable Bakey Posix helper library (required for most implementations)',
+}
+
+newoption {
 	trigger = 'prefix',
 	value = 'PREFIX',
 	description = 'Installation prefix (default is /usr)',
@@ -94,6 +99,15 @@ project 'bakey-rc'
 	targetdir 'lib'
 
 	filter 'not options:enable-bakey-rc'
+		kind 'None'
+
+-- Bakey Posix helper library --
+project 'bakey-posix'
+	kind 'StaticLib'
+	files {'src/bakey-posix.c', 'include/bakey-posix.h'}
+	targetdir 'lib'
+
+	filter 'options:disable-bakey-posix'
 		kind 'None'
 
 -- Escape sequence tests --

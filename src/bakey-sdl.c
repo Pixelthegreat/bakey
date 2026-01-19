@@ -6,11 +6,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <pty.h>
 #include <termios.h>
 #include <sys/time.h>
-#include <sys/wait.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <SDL2/SDL.h>
 #include <cairo.h>
@@ -20,6 +17,7 @@
 #include <bakey-config.h>
 #include <bakey-sdl-config.h>
 #include <bakey-rc.h>
+#include <bakey-posix.h>
 #include <bakey.h>
 
 #define FPS_CAP 60
@@ -71,46 +69,12 @@ static bakey_context_t context = {
 /* open terminal */
 static bakey_result_t term_open(void) {
 
-	pty = posix_openpt(O_RDWR | O_NOCTTY);
-	if (pty < 0) {
-
-		perror("posix_openpt");
+	if (bakey_posix_openpt(&pty, &spty) != BAKEY_RESULT_SUCCESS)
 		return BAKEY_RESULT_FAILURE;
-	}
-	if (grantpt(pty) < 0) {
 
-		perror("grantpt");
-		return BAKEY_RESULT_FAILURE;
-	}
-	if (unlockpt(pty) < 0) {
-
-		perror("unlockpt");
-		return BAKEY_RESULT_FAILURE;
-	}
-
-	/* open slave */
-	const char *path = ptsname(pty);
-	spty = open(path, O_RDWR);
-
-	if (spty < 0) {
-
-		perror("open");
-		return BAKEY_RESULT_FAILURE;
-	}
-
-	/* set window size */
-	struct winsize winsize = {
-		.ws_row = (unsigned short)display.height,
-		.ws_col = (unsigned short)display.width,
-		.ws_xpixel = bakey_sdl_config.width,
-		.ws_ypixel = bakey_sdl_config.height,
-	};
-	if (ioctl(pty, TIOCSWINSZ, &winsize) < 0) {
-
-		perror("ioctl(TIOCSWINSZ)");
-		return BAKEY_RESULT_FAILURE;
-	}
-	return BAKEY_RESULT_SUCCESS;
+	return bakey_posix_tiocswinsz(pty, display.width, display.height,
+				      bakey_sdl_config.width,
+				      bakey_sdl_config.height);
 }
 
 /* read from terminal */
@@ -233,42 +197,6 @@ static int load_config(void) {
 static void sigh_alrm() {
 
 	draw = true;
-}
-
-/* launch process */
-#define LAUNCHERRBUFSZ 256
-static char launcherrbuf[LAUNCHERRBUFSZ];
-
-static int launch(const char *prog, const char **argv) {
-
-	const char *path = ptsname(pty);
-
-	if (setsid() < 0) {
-
-		perror("setsid");
-		return -1;
-	}
-
-	int mpty = open(path, O_RDWR);
-	if (mpty < 0) {
-
-		perror("open");
-		return -1;
-	}
-
-	dup2(mpty, 0);
-	dup2(mpty, 1);
-	dup2(mpty, 2);
-
-	close(mpty);
-
-	/* run program */
-	if (execvp(prog, (char *const *)argv) < 0) {
-
-		snprintf(launcherrbuf, LAUNCHERRBUFSZ, "execvp: %s", strerror(errno));
-		return -1;
-	}
-	return 0;
 }
 
 /* interpret key press */
@@ -560,20 +488,13 @@ static int run(void) {
 	}
 
 	/* create shell process */
-	pid_t pid = fork();
-	if (pid < 0) {
+	const char *shell_argv[] = {bakey_sdl_config.shell, NULL};
+	shell_pid = bakey_posix_launch(bakey_sdl_config.shell, shell_argv, pty);
+	if (shell_pid < 0) {
 
-		perror("fork");
+		fprintf(stderr, "Bakey: %s\n", bakey_get_error());
 		return 1;
 	}
-	else if (!pid) {
-
-		const char *shell_argv[] = {bakey_sdl_config.shell, NULL};
-		if (launch(bakey_sdl_config.shell, shell_argv) < 0)
-			_exit(1);
-		_exit(0);
-	}
-	else shell_pid = pid;
 
 	/* set timer */
 	struct itimerval it = {
@@ -678,21 +599,14 @@ static int run(void) {
 		}
 
 		/* manage shell process */
-		int wstatus;
-		if (waitpid(shell_pid, &wstatus, WCONTINUED | WNOHANG) == shell_pid &&
-		    WIFEXITED(wstatus)) {
-
+		if (bakey_posix_process_exited(shell_pid))
 			running = false;
-			shell_pid = -1;
-		}
 	}
 	return 0;
 }
 
 /* clean up resources */
 static void cleanup(void) {
-
-	if (*launcherrbuf) fprintf(stderr, "%s\n", launcherrbuf);
 
 	if (shell_pid >= 0) kill(shell_pid, SIGKILL);
 	if (context.init) bakey_close(&context);
