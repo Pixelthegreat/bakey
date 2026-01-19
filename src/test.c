@@ -1,4 +1,8 @@
 /*
+ * Copyright 2026, Elliot Kohlmyer
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Simple program for testing different escape
  * sequences
  */

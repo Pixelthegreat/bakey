@@ -1,4 +1,8 @@
 /*
+ * Copyright 2026, Elliot Kohlmyer
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Bakey configuration file support / extension library
  *
  * For an overview of the configuration format, see

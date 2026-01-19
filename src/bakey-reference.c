@@ -1,4 +1,8 @@
 /*
+ * Copyright 2026, Elliot Kohlmyer
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * This is the standard reference implementation for
  * bakey. Though it uses SDL like the proper SDL
  * implementation, it lacks many features including:
