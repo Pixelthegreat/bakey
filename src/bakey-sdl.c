@@ -293,10 +293,17 @@ static void set_color(bakey_color_t color) {
 }
 
 /* draw terminal */
+static bool drawn_background = false;
+
 static void draw_terminal(void) {
 
-	set_color(bakey_sdl_config.background);
-	cairo_paint(cr);
+	bool old_drawn_background = drawn_background;
+	if (!drawn_background) {
+
+		set_color(bakey_sdl_config.background);
+		cairo_paint(cr);
+		drawn_background = true;
+	}
 
 	/* draw text grid */
 	double dw = (double)fwidth;
@@ -304,6 +311,16 @@ static void draw_terminal(void) {
 
 	for (size_t y = 0; y < display.height; y++) {
 		for (size_t x = 0; x < display.width; x++) {
+
+			size_t position = y * display.width + x;
+
+			if (old_drawn_background &&
+			    position != context.position &&
+			    position != context.damage.position &&
+			    (x < context.damage.x || y < context.damage.y ||
+			     x >= context.damage.x + context.damage.width ||
+			     y >= context.damage.y + context.damage.height))
+				continue;
 
 			bakey_cell_t *cell = display.cells + (y * display.width) + x;
 
@@ -328,7 +345,6 @@ static void draw_terminal(void) {
 			bakey_color_t color = foreground;
 
 			/* draw cursor */
-			size_t position = y * display.width + x;
 			if (position == context.position && cursor_visible) {
 
 				switch (bakey_sdl_config.cursor_mode) {
@@ -575,6 +591,7 @@ static int run(void) {
 			if (cursor_updated || display_updated) {
 
 				draw_terminal();
+				bakey_reset_damage(&context);
 
 				SDL_Surface *window_surface = SDL_GetWindowSurface(window);
 

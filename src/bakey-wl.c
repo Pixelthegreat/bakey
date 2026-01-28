@@ -655,16 +655,35 @@ static void draw_character(size_t x, size_t y, int cc, bakey_color_t bg, bakey_c
 		a ^= b;\
 	})
 
+static bool drawn_background = false;
+
 static void draw_frame(void) {
 
-	fill_area(0, 0, width, height, bakey_wl_config.background);
+	bool old_drawn_background = drawn_background;
+	if (!drawn_background) {
+
+		fill_area(0, 0, width, height, bakey_wl_config.background);
+		drawn_background = true;
+	}
 
 	/* draw character cells */
-	//struct timespec ts_start;
-	//clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_start);
+#ifdef BAKEY_WL_TIME_ACCOUNTING
+	struct timespec ts_start;
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_start);
+#endif
 
 	for (size_t y = 0; y < display.height; y++) {
 		for (size_t x = 0; x < display.width; x++) {
+
+			size_t position = y * display.width + x;
+
+			if (old_drawn_background &&
+			    position != context.position &&
+			    position != context.damage.position &&
+			    (x < context.damage.x || y < context.damage.y ||
+			     x >= context.damage.x + context.damage.width ||
+			     y >= context.damage.y + context.damage.height))
+				continue;
 
 			bakey_cell_t *cell = display.cells + (y * display.width) + x;
 
@@ -674,7 +693,6 @@ static void draw_frame(void) {
 			if (cell->style & BAKEY_STYLE_INVERSE)
 				SWAP_VALUES(bg, fg);
 
-			size_t position = y * display.width + x;
 			if (position == context.position && cursor_visible &&
 			    bakey_wl_config.cursor_mode == BAKEY_WL_CURSOR_MODE_INVERTED)
 				SWAP_VALUES(bg, fg);
@@ -686,14 +704,16 @@ static void draw_frame(void) {
 		}
 	}
 
-	//struct timespec ts_end;
-	//clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_end);
+#ifdef BAKEY_WL_TIME_ACCOUNTING
+	struct timespec ts_end;
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_end);
 
-	//uint64_t ns_start = (uint64_t)ts_start.tv_sec * 1000000000 + (uint64_t)ts_start.tv_nsec;
-	//uint64_t ns_end = (uint64_t)ts_end.tv_sec * 1000000000 + (uint64_t)ts_end.tv_nsec;
-	//uint64_t ns = ns_end - ns_start;
+	uint64_t ns_start = (uint64_t)ts_start.tv_sec * 1000000000 + (uint64_t)ts_start.tv_nsec;
+	uint64_t ns_end = (uint64_t)ts_end.tv_sec * 1000000000 + (uint64_t)ts_end.tv_nsec;
+	uint64_t ns = ns_end - ns_start;
 
-	//printf("%llu\n", ns);
+	printf("%llu\n", ns);
+#endif
 }
 
 /* run application */
@@ -965,6 +985,7 @@ static int run(void) {
 			    frame_ready) {
 
 				draw_frame();
+				bakey_reset_damage(&context);
 
 				wl_surface_attach(wl_surface, wl_buffer_shm, 0, 0);
 				wl_surface_damage(wl_surface, 0, 0, (int)width, (int)height);

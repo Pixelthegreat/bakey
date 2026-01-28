@@ -95,6 +95,10 @@ typedef struct bakey_context {
 	size_t scroll_start; /* start of scroll region */
 	size_t scroll_end; /* end of scroll region */
 	bool display_updated;
+	struct {
+		size_t x, y, width, height;
+		size_t position; /* position before reset */
+	} damage; /* updated / damaged region */
 	bakey_context_state_t state;
 	/*
 	 * Values set by the backend
@@ -183,6 +187,17 @@ BAKEY_API bakey_result_t bakey_open(bakey_context_t *context);
  * determined size
  */
 BAKEY_API void bakey_adjust(bakey_context_t *context);
+
+/*
+ * Reset damage area
+ */
+BAKEY_API void bakey_reset_damage(bakey_context_t *context);
+
+/*
+ * Update damage area
+ */
+BAKEY_API void bakey_damage(bakey_context_t *context, size_t x, size_t y,
+			    size_t width, size_t height);
 
 /*
  * Update terminal state

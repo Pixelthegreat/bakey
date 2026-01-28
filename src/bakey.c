@@ -46,6 +46,10 @@ static void insert_characters(bakey_context_t *context, size_t start, size_t cha
 		cell->foreground = context->style.foreground;
 		cell->style = context->style.flags;
 	}
+
+	bakey_damage(context,
+		     0, start / display->width, display->width,
+		     size < display->width? 1: size / display->width);
 }
 
 /* remove characters */
@@ -76,6 +80,10 @@ static void remove_characters(bakey_context_t *context, size_t start, size_t cha
 		cell->foreground = context->style.foreground;
 		cell->style = context->style.flags;
 	}
+
+	bakey_damage(context,
+		     0, start / display->width, display->width,
+		     size < display->width? 1: size / display->width);
 }
 
 /* insert blank lines */
@@ -201,6 +209,11 @@ static void print_character(bakey_context_t *context, wchar_t wc) {
 			cell->background = context->style.background;
 			cell->foreground = context->style.foreground;
 			cell->style = context->style.flags;
+
+			bakey_damage(context,
+				     context->position % display->width,
+				     context->position / display->width,
+				     1, 1);
 		}
 	}
 
@@ -210,12 +223,19 @@ static void print_character(bakey_context_t *context, wchar_t wc) {
 		if (context->position < display->width * display->height) {
 
 			context->old_position = context->position;
-			bakey_cell_t *cell = display->cells + context->position++;
+			size_t position = context->position++;
+
+			bakey_cell_t *cell = display->cells + position;
 
 			cell->character = wc;
 			cell->background = context->style.background;
 			cell->foreground = context->style.foreground;
 			cell->style = context->style.flags;
+
+			bakey_damage(context,
+				     position % display->width,
+				     position / display->width,
+				     1, 1);
 		}
 	}
 
@@ -479,6 +499,8 @@ static void command_H(bakey_context_t *context, const char *sequence, size_t len
 
 	context->position = sy * display->width + sx;
 	context->old_position = context->position;
+
+	context->display_updated = true;
 }
 
 /* erase screen */
@@ -488,7 +510,7 @@ static void command_J(bakey_context_t *context, const char *sequence, size_t len
 
 	bakey_display_t *display = context->backend.display;
 
-	int num;
+	int num = 0;
 	(void)to_int(sequence+1, &num);
 
 	size_t start = context->position;
@@ -522,6 +544,12 @@ static void command_J(bakey_context_t *context, const char *sequence, size_t len
 		cell->foreground = context->style.foreground;
 		cell->style = context->style.flags;
 	}
+
+	size_t range = end - start;
+	bakey_damage(context,
+		     0, start / display->width, display->width,
+		     range < display->width? 1: range / display->width);
+
 	context->display_updated = true;
 }
 
@@ -568,6 +596,12 @@ static void command_K(bakey_context_t *context, const char *sequence, size_t len
 		cell->foreground = context->style.foreground;
 		cell->style = context->style.flags;
 	}
+
+	bakey_damage(context,
+		     start % display->width,
+		     start / display->width,
+		     end - start, 1);
+
 	context->display_updated = true;
 }
 
@@ -767,21 +801,19 @@ static void command_at(bakey_context_t *context, const char *sequence, size_t le
 
 	bakey_display_t *display = context->backend.display;
 
-	size_t remainder = (display->width * display->height) - context->position;
-	size_t nchars = remainder < (size_t)num? remainder: (size_t)num;
+	size_t start = context->position;
+	if (start >= context->scroll_start * display->width)
+		start -= context->scroll_start * display->width;
 
-	if (remainder != nchars)
-		memmove(display->cells + context->position + nchars, display->cells + context->position, remainder - nchars);
+	size_t nchars = (size_t)num;
 
-	for (size_t i = 0; i < nchars; i++) {
+	if (start >= nchars) {
 
-		size_t pos = context->position + i;
-
-		display->cells[pos].character = 0;
-		display->cells[pos].background = context->style.background;
-		display->cells[pos].foreground = context->style.foreground;
-		display->cells[pos].style = context->style.flags;
+		start -= nchars;
+		context->position -= nchars;
 	}
+
+	insert_characters(context, start, nchars);
 
 	context->display_updated = true;
 }
@@ -1001,6 +1033,12 @@ BAKEY_API bakey_result_t bakey_open(bakey_context_t *context) {
 	context->display_updated = false;
 	context->state = BAKEY_CONTEXT_STATE_NORMAL;
 
+	context->damage.x = 0;
+	context->damage.y = 0;
+	context->damage.width = 0;
+	context->damage.height = 0;
+	context->damage.position = 0;
+
 	context->control.flags = BAKEY_CONTROL_FLAG_ECHO |
 				 BAKEY_CONTROL_FLAG_CANONICAL |
 				 BAKEY_CONTROL_FLAG_SIGNAL;
@@ -1045,6 +1083,59 @@ BAKEY_API void bakey_adjust(bakey_context_t *context) {
 	context->old_position = 0;
 	context->internal.width = context->backend.display->width;
 	context->internal.height = context->backend.display->height;
+}
+
+/* reset damage area */
+BAKEY_API void bakey_reset_damage(bakey_context_t *context) {
+
+	context->damage.x = 0;
+	context->damage.y = 0;
+	context->damage.width = 0;
+	context->damage.height = 0;
+	context->damage.position = context->position;
+}
+
+/* update damage area */
+BAKEY_API void bakey_damage(bakey_context_t *context, size_t x, size_t y,
+			    size_t width, size_t height) {
+
+	bakey_display_t *display = context->backend.display;
+
+	if (x >= display->width || y >= display->height ||
+	    !width || !height)
+		return;
+
+	if (x + width > display->width) width = display->width - x;
+	if (y + height > display->height) height = display->height - y;
+
+	/* set damage area */
+	if (!context->damage.width || !context->damage.height) {
+
+		context->damage.x = x;
+		context->damage.y = y;
+		context->damage.width = width;
+		context->damage.height = height;
+	}
+
+	/* grow damage area */
+	else {
+
+		if (x < context->damage.x) {
+
+			context->damage.width += context->damage.x - x;
+			context->damage.x = x;
+		}
+		if (x + width > context->damage.x + context->damage.width)
+			context->damage.width = (x + width) - context->damage.x;
+
+		if (y < context->damage.y) {
+
+			context->damage.height += context->damage.y - y;
+			context->damage.y = y;
+		}
+		if (y + height > context->damage.y + context->damage.height)
+			context->damage.height = (y + height) - context->damage.y;
+	}
 }
 
 /* update context */
