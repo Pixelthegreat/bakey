@@ -65,6 +65,7 @@ int main(int argc, const char **argv) {
 
 	if (!strcmp(test_name, "scroll1")) test_scroll1();
 	else if (!strcmp(test_name, "scroll2")) test_scroll2();
+	else getchar();
 
 	return 0;
 }

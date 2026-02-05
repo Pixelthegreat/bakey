@@ -113,7 +113,7 @@ static void term_signal(bakey_control_character_t cc) {
 		case BAKEY_CONTROL_CHARACTER_SUSPEND: sig = SIGTSTP; break;
 		default: return;
 	}
-	kill(shell_pid, sig);
+	killpg(tcgetpgrp(pty), sig);
 }
 
 /* load configuration */

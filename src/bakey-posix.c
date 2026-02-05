@@ -92,6 +92,12 @@ BAKEY_API pid_t bakey_posix_launch(const char *prog, const char **argv, int pty)
 			_exit(1);
 		}
 
+		if (ioctl(mpty, TIOCSCTTY, 0) < 0) {
+
+			perror("ioctl(TIOCSCTTY)");
+			_exit(1);
+		}
+
 		dup2(mpty, 0);
 		dup2(mpty, 1);
 		dup2(mpty, 2);

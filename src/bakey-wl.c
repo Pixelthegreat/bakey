@@ -159,7 +159,7 @@ static void term_signal(bakey_control_character_t cc) {
 		case BAKEY_CONTROL_CHARACTER_SUSPEND: sig = SIGTSTP; break;
 		default: return;
 	}
-	kill(shell_pid, sig);
+	killpg(tcgetpgrp(pty), sig);
 }
 
 /* load configuration */
@@ -361,6 +361,8 @@ static void keyboard_enter(void *data, struct wl_keyboard *keyboard, uint32_t id
 
 /* leave focus */
 static void keyboard_leave(void *data, struct wl_keyboard *keyboard, uint32_t id, struct wl_surface *surface) {
+
+	key_held_recent = XKB_KEY_NoSymbol;
 }
 
 /* process key */
@@ -369,7 +371,7 @@ static void process_key(xkb_keysym_t keysym, uint32_t code, uint32_t state) {
 	if (keysym == XKB_KEY_Control_L)
 		ctrled = state > 0;
 
-	if (ctrled) {
+	if (ctrled && state > 0) {
 
 		if (code >= L'a' && code <= L'z')
 			code -= L'a';
@@ -657,7 +659,11 @@ static void draw_character(size_t x, size_t y, int cc, bakey_color_t bg, bakey_c
 
 static bool drawn_background = false;
 
-static void draw_frame(void) {
+struct damage {
+	size_t left, right, top, bottom;
+};
+
+static void draw_frame(struct damage *damage) {
 
 	bool old_drawn_background = drawn_background;
 	if (!drawn_background) {
@@ -665,6 +671,11 @@ static void draw_frame(void) {
 		fill_area(0, 0, width, height, bakey_wl_config.background);
 		drawn_background = true;
 	}
+
+	damage->left = width;
+	damage->right = 0;
+	damage->top = height;
+	damage->bottom = 0;
 
 	/* draw character cells */
 #ifdef BAKEY_WL_TIME_ACCOUNTING
@@ -685,6 +696,16 @@ static void draw_frame(void) {
 			     y >= context.damage.y + context.damage.height))
 				continue;
 
+			size_t dx = x * fwidth;
+			size_t dy = y * fheight;
+
+			/* update damage area */
+			if (dx < damage->left) damage->left = dx;
+			if (dx+fwidth > damage->right) damage->right = dx+fwidth;
+			if (dy < damage->top) damage->top = dy;
+			if (dy+fheight > damage->bottom) damage->bottom = dy+fheight;
+
+			/* draw character */
 			bakey_cell_t *cell = display.cells + (y * display.width) + x;
 
 			bakey_color_t bg = cell->background;
@@ -697,13 +718,22 @@ static void draw_frame(void) {
 			    bakey_wl_config.cursor_mode == BAKEY_WL_CURSOR_MODE_INVERTED)
 				SWAP_VALUES(bg, fg);
 
-			size_t dx = x * fwidth;
-			size_t dy = y * fheight;
-
 			draw_character(dx, dy, cell->character, bg, fg);
 		}
 	}
 
+	/* fix damage area */
+	if (damage->right < damage->left ||
+	    damage->bottom < damage->top ||
+	    !old_drawn_background) {
+
+		damage->left = 0;
+		damage->right = width;
+		damage->top = 0;
+		damage->bottom = height;
+	}
+
+	/* print frame time */
 #ifdef BAKEY_WL_TIME_ACCOUNTING
 	struct timespec ts_end;
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts_end);
@@ -984,11 +1014,17 @@ static int run(void) {
 			if ((cursor_updated || display_updated) &&
 			    frame_ready) {
 
-				draw_frame();
+				struct damage damage;
+				draw_frame(&damage);
+
 				bakey_reset_damage(&context);
 
 				wl_surface_attach(wl_surface, wl_buffer_shm, 0, 0);
-				wl_surface_damage(wl_surface, 0, 0, (int)width, (int)height);
+				wl_surface_damage(wl_surface,
+						  (int32_t)damage.left,
+						  (int32_t)damage.top,
+						  (int32_t)(damage.right - damage.left),
+						  (int32_t)(damage.bottom - damage.top));
 				wl_surface_commit(wl_surface);
 
 				if (update_frame() < 0)
