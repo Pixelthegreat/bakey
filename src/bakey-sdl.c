@@ -34,7 +34,7 @@ static cairo_surface_t *cr_surface = NULL;
 static cairo_t *cr = NULL;
 static PangoLayout *layout = NULL;
 static PangoFontDescription *font = NULL;
-static size_t fwidth, fheight;
+static size_t width, height, fwidth, fheight;
 
 static size_t cursor_flash_count = 0;
 static bool cursor_visible = true;
@@ -78,8 +78,7 @@ static bakey_result_t term_open(void) {
 		return BAKEY_RESULT_FAILURE;
 
 	return bakey_posix_tiocswinsz(pty, display.width, display.height,
-				      bakey_sdl_config.width,
-				      bakey_sdl_config.height);
+				      width, height);
 }
 
 /* read from terminal */
@@ -202,6 +201,51 @@ static int load_config(void) {
 static void sigh_alrm() {
 
 	draw = true;
+}
+
+/* create or recreate surfaces */
+static int create_surfaces(void) {
+
+	if (cr) cairo_destroy(cr);
+	if (cr_surface) cairo_surface_destroy(cr_surface);
+	if (surface) SDL_FreeSurface(surface);
+
+	cr = NULL;
+	cr_surface = NULL;
+	surface = NULL;
+
+	surface = SDL_CreateRGBSurface(0,
+				       width,
+				       height,
+				       32,
+				       0x00ff0000,
+				       0x0000ff00,
+				       0x000000ff,
+				       0);
+	if (!surface) {
+
+		fprintf(stderr, "SDL: %s\n", SDL_GetError());
+		return -1;
+	}
+
+	/* create cairo surface */
+	cr_surface = cairo_image_surface_create_for_data(
+		(unsigned char *)surface->pixels, CAIRO_FORMAT_ARGB32,
+		surface->w, surface->h, surface->pitch);
+	if (!cr_surface) {
+
+		fprintf(stderr, "Can't create Cairo surface\n");
+		return -1;
+	}
+	cairo_surface_set_device_scale(cr_surface, 1, 1);
+
+	cr = cairo_create(cr_surface);
+	if (!cr) {
+
+		fprintf(stderr, "Can't create Cairo context\n");
+		return -1;
+	}
+	return 0;
 }
 
 /* interpret key press */
@@ -382,6 +426,42 @@ static void draw_terminal(void) {
 	}
 }
 
+/* handle resize event */
+static int handle_resize(SDL_Event *event) {
+
+	width = (size_t)event->window.data1;
+	height = (size_t)event->window.data2;
+
+	size_t new_width = width / fwidth;
+	size_t new_height = height / fheight;
+
+	if (!new_width || !new_height ||
+	    (display.width == new_width &&
+	     display.height == new_height))
+		return 0;
+
+	if (create_surfaces() < 0)
+		return -1;
+
+	display.width = new_width;
+	display.height = new_height;
+
+	display.cells = realloc(display.cells,
+			sizeof(bakey_cell_t) *
+			display.width * display.height);
+
+	bakey_adjust(&context);
+
+	if (bakey_posix_tiocswinsz(pty,
+	    display.width, display.height,
+	    width, height) < 0)
+		return -1;
+
+	drawn_background = false;
+	display_updated = true;
+	return 0;
+}
+
 /* reset cursor state */
 static void reset_cursor(void) {
 
@@ -434,51 +514,23 @@ static int run(void) {
 	init_sdl = true;
 
 	/* create window */
+	width = bakey_sdl_config.width;
+	height = bakey_sdl_config.height;
+
 	window = SDL_CreateWindow(bakey_sdl_config.title,
 				  SDL_WINDOWPOS_UNDEFINED,
 				  SDL_WINDOWPOS_UNDEFINED,
-				  bakey_sdl_config.width,
-				  bakey_sdl_config.height,
-				  SDL_WINDOW_ALLOW_HIGHDPI);
+				  width, height,
+				  SDL_WINDOW_ALLOW_HIGHDPI |
+				  SDL_WINDOW_RESIZABLE);
 	if (!window) {
 
 		fprintf(stderr, "SDL: %s\n", SDL_GetError());
 		return 1;
 	}
 
-	surface = SDL_CreateRGBSurface(0,
-				       bakey_sdl_config.width,
-				       bakey_sdl_config.height,
-				       32,
-				       0x00ff0000,
-				       0x0000ff00,
-				       0x000000ff,
-				       0);
-	if (!surface) {
-
-		fprintf(stderr, "SDL: %s\n", SDL_GetError());
+	if (create_surfaces() < 0)
 		return 1;
-	}
-
-	/* create cairo surface */
-	cr_surface = cairo_image_surface_create_for_data((unsigned char *)surface->pixels,
-							 CAIRO_FORMAT_ARGB32,
-							 surface->w,
-							 surface->h,
-							 surface->pitch);
-	if (!cr_surface) {
-
-		fprintf(stderr, "Can't create Cairo surface\n");
-		return 1;
-	}
-	cairo_surface_set_device_scale(cr_surface, 1, 1);
-
-	cr = cairo_create(cr_surface);
-	if (!cr) {
-
-		fprintf(stderr, "Can't create Cairo context\n");
-		return 1;
-	}
 
 	/* load font */
 	font = pango_font_description_new();
@@ -498,8 +550,8 @@ static int run(void) {
 	fheight = (size_t)PANGO_PIXELS(y);
 
 	/* initialize bakey */
-	display.width = bakey_sdl_config.width / fwidth;
-	display.height = bakey_sdl_config.height / fheight;
+	display.width = width / fwidth;
+	display.height = height / fheight;
 	display.cells = malloc(sizeof(bakey_cell_t) * display.width * display.height);
 
 	if (bakey_open(&context) != BAKEY_RESULT_SUCCESS) {
@@ -585,6 +637,10 @@ static int run(void) {
 				else if (event.type == SDL_KEYDOWN ||
 					 event.type == SDL_KEYUP)
 					process_key(&event);
+
+				else if (event.type == SDL_WINDOWEVENT &&
+					 event.window.event == SDL_WINDOWEVENT_RESIZED)
+					handle_resize(&event);
 			}
 
 			/* update terminal view */

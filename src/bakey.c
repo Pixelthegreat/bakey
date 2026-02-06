@@ -1097,10 +1097,26 @@ BAKEY_API void bakey_adjust(bakey_context_t *context) {
 
 	if (!context || !context->init) return;
 
+	bakey_display_t *display = context->backend.display;
+
+	if (context->internal.width == display->width &&
+	    context->internal.height == display->height)
+		return;
+
 	context->position = 0;
 	context->old_position = 0;
-	context->internal.width = context->backend.display->width;
-	context->internal.height = context->backend.display->height;
+	context->internal.width = display->width;
+	context->internal.height = display->height;
+
+	for (size_t i = 0; i < context->internal.width * context->internal.height; i++) {
+
+		bakey_cell_t *cell = context->backend.display->cells + i;
+
+		cell->character = 0;
+		cell->background = context->style.background;
+		cell->foreground = context->style.foreground;
+		cell->style = context->style.flags;
+	}
 }
 
 /* reset damage area */
