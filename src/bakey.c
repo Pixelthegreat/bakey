@@ -12,7 +12,7 @@
 #include <bakey-config.h>
 #include <bakey.h>
 
-#define ESCAPE_SEQUENCE_COMMANDS "ABCDEfFGhHJKlLnmMPrsSTu@"
+#define ESCAPE_SEQUENCE_COMMANDS "ABCDEfFGhHJKlLnmMPrsSTu@=><"
 
 #define ERRBUFSZ 1024
 static char errbuf[ERRBUFSZ];
@@ -190,6 +190,10 @@ static void print_character(bakey_context_t *context, wchar_t wc) {
 	}
 
 	else if (wc == L'\x1b') {
+
+#ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
+		printf("\\e");
+#endif
 
 		context->state = BAKEY_CONTEXT_STATE_ESCAPE_SEQUENCE;
 		context->internal.sequence_ready = false;
@@ -923,6 +927,19 @@ static void command_T(bakey_context_t *context, const char *sequence, size_t len
 	context->display_updated = true;
 }
 
+/* reverse index (go up one and scroll if necessary) */
+static void command_M(bakey_context_t *context, const char *sequence, size_t length) {
+
+	bakey_display_t *display = context->backend.display;
+
+	if (context->position < display->width) {
+
+		scroll_down(context, 1);
+		context->display_updated = true;
+	}
+	else context->position -= display->width;
+}
+
 /* interpret escape sequence */
 static void (*command_handlers[256])(bakey_context_t *, const char *, size_t) = {
 	['A'] = command_A,
@@ -939,6 +956,7 @@ static void (*command_handlers[256])(bakey_context_t *, const char *, size_t) = 
 	['L'] = command_L,
 	['n'] = command_n,
 	['m'] = command_m,
+	['M'] = command_M,
 	['P'] = command_P,
 	['r'] = command_r,
 	['s'] = command_7,
@@ -1198,6 +1216,12 @@ BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc) {
 				if (!context->backend.term_signal)
 					return;
 
+				if (context->control.flags & BAKEY_CONTROL_FLAG_ECHO) {
+
+					print_character(context, L'^');
+					print_character(context, wc + L'A' - 1);
+				}
+
 				context->backend.term_signal(cc);
 				return;
 			}
@@ -1245,8 +1269,8 @@ BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc) {
 				if (context->position &&
 				    (context->control.flags & BAKEY_CONTROL_FLAG_ECHO)) {
 
-					print_character(context, '\b');
-					print_character(context, '\x7f');
+					print_character(context, L'\b');
+					print_character(context, L'\x7f');
 				}
 			}
 			else add_to_writebuf(context, '\x7f');
