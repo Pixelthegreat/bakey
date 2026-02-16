@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <limits.h>
 #include <locale.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -15,8 +16,8 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <SDL2/SDL.h>
-#include <cairo.h>
-#include <pango/pangocairo.h>
+#include <ft2build.h>
+#include FT_FREETYPE_H
 
 #define BAKEY_CONFIG_IMPL
 #include <bakey-config.h>
@@ -27,13 +28,12 @@
 
 #define FPS_CAP 60
 
+#define FONT_TEXTURE_DIV 96
+
 static bool init_sdl = false;
 static SDL_Window *window = NULL;
-static SDL_Surface *surface = NULL;
-static cairo_surface_t *cr_surface = NULL;
-static cairo_t *cr = NULL;
-static PangoLayout *layout = NULL;
-static PangoFontDescription *font = NULL;
+static SDL_Texture *font_texture = NULL;
+static SDL_Renderer *renderer = NULL;
 static size_t width, height, fwidth, fheight;
 
 static size_t cursor_flash_count = 0;
@@ -50,6 +50,10 @@ static bool running = true;
 static bool draw = false;
 static bool shifted = false;
 static bool ctrled = false;
+
+static FT_Library ft_library;
+static bool init_ft_library = false;
+static FT_Face ft_face;
 
 /* bakey context */
 static bakey_display_t display;
@@ -151,7 +155,7 @@ static bakey_result_t handle_key(const char *key, const char *value) {
 		strncpy(bakey_sdl_config.font_face, value, BAKEY_SDL_CONFIG_STRING_SIZE);
 
 	else if (!strcmp(key, "sdl_font_size"))
-		bakey_sdl_config.font_size = (size_t)atoi(value);
+		bakey_sdl_config.font_size = (float)atof(value);
 
 	/* cursor settings */
 	else if (!strcmp(key, "sdl_cursor_mode")) {
@@ -197,55 +201,88 @@ static int load_config(void) {
 }
 #endif
 
-/* timer callback */
-static void sigh_alrm() {
+/* load font texture */
+static int load_font_texture(void) {
 
-	draw = true;
-}
+	size_t theight = (size_t)ft_face->num_glyphs / FONT_TEXTURE_DIV + 1;
+	size_t twidth = FONT_TEXTURE_DIV;
 
-/* create or recreate surfaces */
-static int create_surfaces(void) {
+	SDL_Surface *surface = SDL_CreateRGBSurface(0,
+		twidth * fwidth, theight * fheight,
+		32, 0x000000ff, 0x0000ff00, 0x00ff0000,
+		0xff000000);
 
-	if (cr) cairo_destroy(cr);
-	if (cr_surface) cairo_surface_destroy(cr_surface);
-	if (surface) SDL_FreeSurface(surface);
-
-	cr = NULL;
-	cr_surface = NULL;
-	surface = NULL;
-
-	surface = SDL_CreateRGBSurface(0,
-				       width,
-				       height,
-				       32,
-				       0x00ff0000,
-				       0x0000ff00,
-				       0x000000ff,
-				       0);
 	if (!surface) {
 
 		fprintf(stderr, "SDL: %s\n", SDL_GetError());
 		return -1;
 	}
 
-	/* create cairo surface */
-	cr_surface = cairo_image_surface_create_for_data(
-		(unsigned char *)surface->pixels, CAIRO_FORMAT_ARGB32,
-		surface->w, surface->h, surface->pitch);
-	if (!cr_surface) {
+	/* render glyphs */
+	SDL_LockSurface(surface);
 
-		fprintf(stderr, "Can't create Cairo surface\n");
-		return -1;
+	for (FT_UInt i = 1; i < ft_face->num_glyphs; i++) {
+
+		FT_UInt fy = i / FONT_TEXTURE_DIV;
+		FT_UInt fx = i % FONT_TEXTURE_DIV;
+
+		uint8_t *data = (uint8_t *)surface->pixels + fy * fheight *
+				surface->pitch + fx * fwidth * 4;
+
+		if (FT_Load_Glyph(ft_face, i, FT_LOAD_DEFAULT))
+			continue;
+
+		if (FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL))
+			continue;
+
+		/* determine area to copy */
+		size_t x = ft_face->glyph->bitmap_left;
+		if (x >= fwidth) continue;
+
+		size_t w = ft_face->glyph->bitmap.width;
+		if (x+w > fwidth) w = fwidth - x;
+
+		size_t y = ft_face->size->metrics.y_ppem -
+			   ft_face->glyph->bitmap_top;
+		if (y >= fheight) continue;
+
+		size_t h = ft_face->glyph->bitmap.rows;
+		if (y+h > fheight) h = fheight - y;
+
+		/* copy data */
+		for (size_t py = 0; py < h; py++) {
+			for (size_t px = 0; px < w; px++) {
+
+				uint8_t value = ft_face->glyph->bitmap.buffer[py *
+					ft_face->glyph->bitmap.pitch + px];
+
+				size_t index = (y+py) * surface->pitch + (x+px) * 4;
+
+				data[index] = 0xff;
+				data[index + 1] = 0xff;
+				data[index + 2] = 0xff;
+				data[index + 3] = value;
+			}
+		}
 	}
-	cairo_surface_set_device_scale(cr_surface, 1, 1);
 
-	cr = cairo_create(cr_surface);
-	if (!cr) {
+	SDL_UnlockSurface(surface);
 
-		fprintf(stderr, "Can't create Cairo context\n");
+	font_texture = SDL_CreateTextureFromSurface(renderer, surface);
+	SDL_FreeSurface(surface);
+
+	if (!font_texture) {
+
+		fprintf(stderr, "SDL: %s\n", SDL_GetError());
 		return -1;
 	}
 	return 0;
+}
+
+/* timer callback */
+static void sigh_alrm() {
+
+	draw = true;
 }
 
 /* interpret key press */
@@ -327,32 +364,53 @@ static void process_key(SDL_Event *event) {
 }
 
 /* set color to bakey color */
-static void set_color(bakey_color_t color) {
+static void set_color(bakey_color_t color, bool set_texture_mod) {
 
-	double red = (double)((color >> 16) & 0xff) / 255.0;
-	double green = (double)((color >> 8) & 0xff) / 255.0;
-	double blue = (double)(color & 0xff) / 255.0;
+	if (!set_texture_mod) {
 
-	cairo_set_source_rgb(cr, red, green, blue);
+		SDL_SetRenderDrawColor(renderer,
+			(uint8_t)((color >> 16) & 0xff),
+			(uint8_t)((color >> 8) & 0xff),
+			(uint8_t)(color & 0xff),
+			0xff);
+	}
+	else {
+		SDL_SetTextureColorMod(font_texture,
+			(uint8_t)((color >> 16) & 0xff),
+			(uint8_t)((color >> 8) & 0xff),
+			(uint8_t)(color & 0xff));
+	}
 }
 
 /* draw terminal */
 static bool drawn_background = false;
 
-static void draw_terminal(void) {
+struct damage {
+	size_t left, right, top, bottom;
+};
+
+#define SWAP_VALUES(a, b) ({\
+		a ^= b;\
+		b ^= a;\
+		a ^= b;\
+	})
+
+static void draw_terminal(struct damage *damage) {
 
 	bool old_drawn_background = drawn_background;
 	if (!drawn_background) {
 
-		set_color(bakey_sdl_config.background);
-		cairo_paint(cr);
+		set_color(bakey_sdl_config.background, false);
+		SDL_RenderClear(renderer);
 		drawn_background = true;
 	}
 
-	/* draw text grid */
-	double dw = (double)fwidth;
-	double dh = (double)fheight;
+	damage->left = width;
+	damage->right = 0;
+	damage->top = height;
+	damage->bottom = 0;
 
+	/* draw text grid */
 	for (size_t y = 0; y < display.height; y++) {
 		for (size_t x = 0; x < display.width; x++) {
 
@@ -367,62 +425,67 @@ static void draw_terminal(void) {
 				continue;
 
 			bakey_cell_t *cell = display.cells + (y * display.width) + x;
+			FT_UInt index = FT_Get_Char_Index(ft_face, cell->character);
 
-			double dx = (double)(x * fwidth);
-			double dy = (double)(y * fheight);
+			size_t dx = x * fwidth;
+			size_t dy = y * fheight;
+			size_t sx = ((size_t)index % FONT_TEXTURE_DIV) * fwidth;
+			size_t sy = ((size_t)index / FONT_TEXTURE_DIV) * fheight;
 
+			/* update damage area */
+			if (dx < damage->left) damage->left = dx;
+			if (dx+fwidth > damage->right) damage->right = dx+fwidth;
+			if (dy < damage->top) damage->top = dy;
+			if (dy+fheight > damage->bottom) damage->bottom = dy+fheight;
+
+			/* determine colors */
 			bakey_color_t background = cell->background;
 			bakey_color_t foreground = cell->foreground;
 
-			if (cell->style & BAKEY_STYLE_INVERSE) {
+			if (cell->style & BAKEY_STYLE_INVERSE)
+				SWAP_VALUES(background, foreground);
 
-				bakey_color_t color = background;
-				background = foreground;
-				foreground = color;
-			}
-
-			/* draw background */
-			set_color(background);
-			cairo_rectangle(cr, dx, dy, dw, dh);
-			cairo_fill(cr);
-
-			bakey_color_t color = foreground;
-
-			/* draw cursor */
 			if (position == context.position && cursor_visible) {
 
 				switch (bakey_sdl_config.cursor_mode) {
 
 					/* inverted cursor */
 					case BAKEY_SDL_CURSOR_MODE_INVERTED:
-						color = background;
-
-						set_color(foreground);
-						cairo_rectangle(cr, dx, dy, dw, dh);
-						cairo_fill(cr);
+						SWAP_VALUES(background, foreground);
 						break;
 				}
 			}
 
 			/* draw character */
-			if (!cell->character || cell->character == ' ') continue;
+			SDL_Rect dest = {
+				(int)dx, (int)dy,
+				(int)fwidth, (int)fheight,
+			};
+			SDL_Rect source = {
+				(int)sx, (int)sy,
+				(int)fwidth, (int)fheight,
+			};
 
-			char cbuf[MB_CUR_MAX+1];
-			int nch = wctomb(cbuf, cell->character);
+			set_color(background, false);
+			SDL_RenderFillRect(renderer, &dest);
 
-			if (nch < 1) {
+			if (index) {
 
-				cbuf[0] = '?';
-				cbuf[1] = 0;
+				set_color(foreground, true);
+				SDL_RenderCopy(renderer, font_texture, &source, &dest);
 			}
-			else cbuf[nch] = 0;
-
-			cairo_move_to(cr, dx, dy);
-			set_color(color);
-
-			pango_layout_set_text(layout, cbuf, nch);
-			pango_cairo_show_layout(cr, layout);
 		}
+	}
+
+	/* fix damage area */
+	if (damage->right < damage->left ||
+	    damage->bottom < damage->top ||
+	    !old_drawn_background) {
+
+		damage->left = 0;
+		damage->right = width;
+		damage->top = 0;
+		damage->bottom = height;
 	}
 }
 
@@ -439,9 +502,6 @@ static int handle_resize(SDL_Event *event) {
 	    (display.width == new_width &&
 	     display.height == new_height))
 		return 0;
-
-	if (create_surfaces() < 0)
-		return -1;
 
 	display.width = new_width;
 	display.height = new_height;
@@ -529,25 +589,43 @@ static int run(void) {
 		return 1;
 	}
 
-	if (create_surfaces() < 0)
+	renderer = SDL_CreateRenderer(window, -1, 0);
+	if (!renderer) {
+
+		fprintf(stderr, "SDL: %s\n", SDL_GetError());
 		return 1;
+	}
 
-	/* load font */
-	font = pango_font_description_new();
-	pango_font_description_set_family(font, bakey_sdl_config.font_face);
-	pango_font_description_set_weight(font, PANGO_WEIGHT_NORMAL);
-	pango_font_description_set_absolute_size(font, bakey_sdl_config.font_size * PANGO_SCALE);
+	/* initialize freetype */
+	if (FT_Init_FreeType(&ft_library)) {
 
-	layout = pango_cairo_create_layout(cr);
-	pango_layout_set_font_description(layout, font);
+		fprintf(stderr, "Can't initialize FreeType\n");
+		return 1;
+	}
+	init_ft_library = true;
 
-	pango_layout_set_text(layout, "W", -1);
+	if (FT_New_Face(ft_library, bakey_sdl_config.font_face, 0, &ft_face)) {
 
-	int x, y;
-	pango_layout_get_size(layout, &x, &y);
+		fprintf(stderr, "Can't load FreeType font face\n");
+		return 1;
+	}
 
-	fwidth = (size_t)PANGO_PIXELS(x);
-	fheight = (size_t)PANGO_PIXELS(y);
+	if (FT_Set_Char_Size(ft_face, 0, (FT_F26Dot6)(bakey_sdl_config.font_size * 64.f), 96, 96)) {
+
+		fprintf(stderr, "Can't set FreeType font size\n");
+		return 1;
+	}
+
+	FT_UInt index = FT_Get_Char_Index(ft_face, L'W');
+	FT_Load_Glyph(ft_face, index, FT_LOAD_DEFAULT);
+	FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL);
+
+	fwidth = ft_face->glyph->advance.x >> 6;
+	fheight = ft_face->size->metrics.height >> 6;
+
+	/* load font texture */
+	if (load_font_texture() < 0)
+		return 1;
 
 	/* initialize bakey */
 	display.width = width / fwidth;
@@ -646,14 +724,11 @@ static int run(void) {
 			/* update terminal view */
 			if (cursor_updated || display_updated) {
 
-				draw_terminal();
+				struct damage damage;
+				draw_terminal(&damage);
+
 				bakey_reset_damage(&context);
-
-				SDL_Surface *window_surface = SDL_GetWindowSurface(window);
-
-				SDL_Rect rect = {0, 0, 0, 0};
-				SDL_BlitSurface(surface, NULL, window_surface, &rect);
-				SDL_UpdateWindowSurface(window);
+				SDL_RenderPresent(renderer);
 
 				display_updated = false;
 			}
@@ -688,11 +763,7 @@ static void cleanup(void) {
 
 	if (shell_pid >= 0) kill(shell_pid, SIGKILL);
 	if (context.init) bakey_close(&context);
-	if (layout) g_object_unref(G_OBJECT(layout));
-	if (font) pango_font_description_free(font);
-	if (cr) cairo_destroy(cr);
-	if (cr_surface) cairo_surface_destroy(cr_surface);
-	if (surface) SDL_FreeSurface(surface);
+	if (renderer) SDL_DestroyRenderer(renderer);
 	if (window) SDL_DestroyWindow(window);
 	if (init_sdl) SDL_Quit();
 }

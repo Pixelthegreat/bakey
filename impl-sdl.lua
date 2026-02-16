@@ -2,9 +2,9 @@
 project 'bakey-sdl'
 	kind 'WindowedApp'
 	files {'src/bakey-sdl.c', 'include/bakey-sdl-config.h'}
-	buildoptions {'`pkg-config --cflags pangocairo`'}
-	links {'bakey', 'bakey-posix', 'SDL2main', 'SDL2'}
-	linkoptions {'`pkg-config --libs pangocairo`'}
+	buildoptions {'`pkg-config --cflags freetype2`'}
+	links {'bakey', 'bakey-posix', 'SDL2main', 'SDL2', 'm'}
+	linkoptions {'`pkg-config --libs freetype2`'}
 	targetdir 'bin'
 
 	defines {'_DEFAULT_SOURCE'}

@@ -47,8 +47,8 @@ sdl_width = 640
 sdl_height = 408
 sdl_background = #0e0f10
 
-sdl_font_face = DejaVu Sans Mono
-sdl_font_size = 14
+sdl_font_face = /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+sdl_font_size = 10.7
 
 sdl_cursor_mode = inverted
 sdl_cursor_flash_interval = 0.625

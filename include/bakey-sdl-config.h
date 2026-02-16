@@ -27,7 +27,7 @@ typedef struct bakey_sdl_config {
 	 * Font settings
 	 */
 	char font_face[BAKEY_SDL_CONFIG_STRING_SIZE];
-	size_t font_size;
+	float font_size;
 	/*
 	 * Cursor settings
 	 */
