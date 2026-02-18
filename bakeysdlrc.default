@@ -6,40 +6,40 @@
 #
 
 # == STYLE == #
-background = #16161a
-foreground = #d7e0fe
+background = #000000
+foreground = #aaaaaa
 
 # Black #
-color0 = #202126
-color8 = #383a42
+color0 = #000000
+color8 = #555555
 
 # Red #
-color1 = #bd608f
-color9 = #eeaacc
+color1 = #aa0000
+color9 = #ff5555
 
 # Green #
-color2 = #8fbd60
-color10 = #cceeaa
+color2 = #00aa00
+color10 = #55ff55
 
 # Yellow #
-color3 = #bd8f60
-color11 = #eeccaa
+color3 = #aa5500
+color11 = #ffff55
 
 # Blue #
-color4 = #608fbd
-color12 = #aaccee
+color4 = #0000aa
+color12 = #5555ff
 
 # Magenta #
-color5 = #8f60bd
-color13 = #ccaaee
+color5 = #aa00aa
+color13 = #ff55ff
 
 # Cyan #
-color6 = #60bd8f
-color14 = #aaeecc
+color6 = #00aaaa
+color14 = #55ffff
 
 # White #
-color7 = #aeb5cd
-color15 = #d7e0fe
+color7 = #aaaaaa
+color15 = #ffffff
 
 # == BAKEY-SDL == #
 sdl_title = Bakey

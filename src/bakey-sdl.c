@@ -130,6 +130,10 @@ static const char *rcpaths[] = {
 	"/etc/bakeyrc",
 	BAKEY_PREFIX "/share/bakeysdlrc",
 	BAKEY_PREFIX "/share/bakeyrc",
+#ifdef DEBUG
+	"./bakeysdlrc.default",
+#endif
+	NULL, /* $HOME/bakeyrc */
 };
 
 static bakey_result_t handle_key(const char *key, const char *value) {
@@ -177,14 +181,24 @@ static bakey_result_t handle_key(const char *key, const char *value) {
 	else if (!strcmp(key, "sdl_shell"))
 		strncpy(bakey_sdl_config.shell, value, BAKEY_SDL_CONFIG_STRING_SIZE);
 
-	else return BAKEY_RESULT_FAILURE;
 	return BAKEY_RESULT_SUCCESS;
 }
 
 static int load_config(void) {
 
+	char buf[128];
+	const char *home = getenv("HOME");
+
+	if (home) {
+		
+		snprintf(buf, sizeof(buf), BAKEY_PREFIX "/%s/bakeyrc", home);
+		rcpaths[NRCPATHS-1] = buf;
+	}
+
 	struct stat st;
 	for (size_t i = 0; i < NRCPATHS; i++) {
+
+		if (!rcpaths[i]) continue;
 
 		if (stat(rcpaths[i], &st) < 0 ||
 		    !S_ISREG(st.st_mode))

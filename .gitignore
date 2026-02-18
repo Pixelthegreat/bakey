@@ -4,6 +4,7 @@
 /obj
 /lib
 /bin
+bakey*rc
 
 # Miscellaneous #
 **.swp
