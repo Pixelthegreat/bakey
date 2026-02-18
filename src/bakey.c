@@ -1103,8 +1103,8 @@ BAKEY_API void bakey_adjust(bakey_context_t *context) {
 	    context->internal.height == display->height)
 		return;
 
-	size_t old_width = display->width;
-	size_t old_height = display->height;
+	size_t old_width = context->internal.width;
+	size_t old_height = context->internal.height;
 
 	context->position = 0;
 	context->old_position = 0;

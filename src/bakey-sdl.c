@@ -286,10 +286,28 @@ static void sigh_alrm() {
 }
 
 /* interpret key press */
+static void reset_cursor(void);
+
 static void process_key(SDL_Event *event) {
 
-	if (event->key.keysym.sym == SDLK_LSHIFT ||
-	    event->key.keysym.sym == SDLK_RSHIFT) {
+	if (event->type == SDL_TEXTINPUT) {
+
+		wchar_t wc = 1;
+		size_t pos = 0;
+		for (; pos < SDL_TEXTINPUTEVENT_TEXT_SIZE && wc; pos++) {
+
+			int nch = mbtowc(&wc, event->text.text+pos,
+					 SDL_TEXTINPUTEVENT_TEXT_SIZE - pos);
+			if (nch <= 0) continue;
+			pos += (size_t)nch-1;
+
+			if (wc) bakey_send_character(&context, wc);
+		}
+
+		return;
+	}
+	else if (event->key.keysym.sym == SDLK_LSHIFT ||
+		 event->key.keysym.sym == SDLK_RSHIFT) {
 
 		shifted = (event->type == SDL_KEYDOWN);
 		return;
@@ -303,16 +321,6 @@ static void process_key(SDL_Event *event) {
 	else if (event->type != SDL_KEYDOWN)
 		return;
 
-	/* control modifier */
-	else if (ctrled) {
-
-		wchar_t c = (wchar_t)toupper((int)event->key.keysym.sym);
-
-		if (c >= 'A' && c <= 'Z')
-			bakey_send_character(&context, c - 'A' + 1);
-		return;
-	}
-
 	switch (event->key.keysym.sym) {
 
 		/* generic key */
@@ -325,42 +333,25 @@ static void process_key(SDL_Event *event) {
 		case SDLK_RIGHT: bakey_send_sequence(&context, L"\x1b[C"); break;
 		case SDLK_LEFT: bakey_send_sequence(&context, L"\x1b[D"); break;
 
-		/* printable character */
+		/* control modifier */
 		default:
-			if (event->type != SDL_KEYDOWN)
-				break;
+			if (ctrled) {
 
-			wchar_t wc = (wchar_t)event->key.keysym.sym;
-			if (wc < ' ' || wc > '~')
-				break;
+				SDL_Keycode sym = event->key.keysym.sym;
+				if (sym >= SDLK_a && sym <= SDLK_z) {
 
-			wc = tolower(wc);
-			if (shifted) {
-
-				/* shift character */
-				wc = toupper(wc);
-				if (wc >= '0' && wc <= '9')
-					wc = L")!@#$%^&*("[wc - '0'];
-				else switch (wc) {
-					case '-': wc = '_'; break;
-					case '=': wc = '+'; break;
-					case '[': wc = '{'; break;
-					case ']': wc = '}'; break;
-					case ';': wc = ':'; break;
-					case '\'': wc = '"'; break;
-					case ',': wc = '<'; break;
-					case '.': wc = '>'; break;
-					case '\\': wc = '|'; break;
-					case '/': wc = '?'; break;
-					case '`': wc = '~'; break;
+					sym -= SDLK_a-1;
+					bakey_send_character(&context, (wchar_t)sym);
 				}
 			}
-
-			bakey_send_character(&context, wc);
 			break;
 	}
-	if (context.display_updated)
+
+	if (context.display_updated) {
+
+		reset_cursor();
 		display_updated = true;
+	}
 }
 
 /* set color to bakey color */
@@ -713,7 +704,8 @@ static int run(void) {
 					running = false;
 
 				else if (event.type == SDL_KEYDOWN ||
-					 event.type == SDL_KEYUP)
+					 event.type == SDL_KEYUP ||
+					 event.type == SDL_TEXTINPUT)
 					process_key(&event);
 
 				else if (event.type == SDL_WINDOWEVENT &&
