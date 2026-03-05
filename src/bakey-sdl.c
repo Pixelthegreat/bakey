@@ -191,7 +191,7 @@ static int load_config(void) {
 
 	if (home) {
 		
-		snprintf(buf, sizeof(buf), BAKEY_PREFIX "/%s/bakeyrc", home);
+		snprintf(buf, sizeof(buf), "/%s/bakeyrc", home);
 		rcpaths[NRCPATHS-1] = buf;
 	}
 
@@ -537,7 +537,14 @@ static void reset_cursor(void) {
 }
 
 /* run application */
-static int run(void) {
+static int run(int argc, const char **argv) {
+
+	bakey_posix_options_t options;
+
+	if (bakey_posix_parse_arguments(&options, argc, argv) != BAKEY_RESULT_SUCCESS)
+		return 1;
+	if (options.flags & BAKEY_POSIX_OPTION_FLAG_HELP)
+		return 0;
 
 #ifdef BAKEY_RC
 	if (load_config() < 0)
@@ -552,7 +559,6 @@ static int run(void) {
 	action.sa_handler = sigh_alrm;
 	sigemptyset(&action.sa_mask);
 	action.sa_flags = 0;
-	action.sa_restorer = NULL;
 
 	if (sigaction(SIGALRM, &action, NULL)) {
 
@@ -562,12 +568,23 @@ static int run(void) {
 
 	/* configure environment */
 	setenv("TERM", "vt100-bakey", 1);
-#ifdef DEBUG
-	static char termpathbuf[PATH_MAX];
-	realpath("./terminfo", termpathbuf);
 
-	setenv("TERMINFO", termpathbuf, 1);
+	const char *terminfo_path = NULL;
+#ifdef DEBUG
+	terminfo_path = "./terminfo";
 #endif
+	if (options.terminfo_path)
+		terminfo_path = options.terminfo_path;
+
+	static char termpathbuf[PATH_MAX];
+	if (terminfo_path) {
+
+		realpath(terminfo_path, termpathbuf);
+		setenv("TERMINFO", termpathbuf, 1);
+	}
+
+	setenv("COLORS", "256", 1);
+	setenv("COLORTERM", "truecolor", 1);
 
 	/* initialize sdl */
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
@@ -587,7 +604,8 @@ static int run(void) {
 				  SDL_WINDOWPOS_UNDEFINED,
 				  width, height,
 				  SDL_WINDOW_ALLOW_HIGHDPI |
-				  SDL_WINDOW_RESIZABLE);
+				  SDL_WINDOW_RESIZABLE |
+				  SDL_WINDOW_HIDDEN);
 	if (!window) {
 
 		fprintf(stderr, "SDL: %s\n", SDL_GetError());
@@ -600,6 +618,8 @@ static int run(void) {
 		fprintf(stderr, "SDL: %s\n", SDL_GetError());
 		return 1;
 	}
+
+	SDL_ShowWindow(window);
 
 	/* initialize freetype */
 	if (FT_Init_FreeType(&ft_library)) {
@@ -774,9 +794,9 @@ static void cleanup(void) {
 	if (init_sdl) SDL_Quit();
 }
 
-int main() {
+int main(int argc, const char **argv) {
 
-	int code = run();
+	int code = run(argc, argv);
 	cleanup();
 	return code;
 }

@@ -32,7 +32,6 @@
 #include <unistd.h> /* for close */
 #include <fcntl.h> /* for file flags */
 #include <signal.h> /* for sigaction */
-#include <pty.h> /* for pseudo-terminal stuff */
 #include <termios.h> /* for terminal control stuff */
 #include <sys/time.h> /* for setitimer */
 #include <sys/ioctl.h> /* for ioctl and TIOCSWINSZ */
@@ -916,7 +915,6 @@ static int run(void) {
 	action.sa_handler = sigh_alrm;
 	sigemptyset(&action.sa_mask);
 	action.sa_flags = 0;
-	action.sa_restorer = NULL;
 
 	if (sigaction(SIGALRM, &action, NULL)) {
 

@@ -121,3 +121,46 @@ BAKEY_API bool bakey_posix_process_exited(pid_t pid) {
 	return waitpid(pid, &wstatus, WCONTINUED | WNOHANG) == pid &&
 	       WIFEXITED(wstatus);
 }
+
+/* parse arguments */
+static void print_usage(const char *progname) {
+
+	printf("Usage: %s [-h] [-t TERMINFO]\n", progname);
+}
+
+static void print_help(const char *progname) {
+
+	print_usage(progname);
+	printf("\nOptions:\n"
+	       "    -h           Show this help message\n"
+	       "    -t TERMINFO  Specify terminfo directory\n");
+}
+
+BAKEY_API bakey_result_t bakey_posix_parse_arguments(bakey_posix_options_t *options,
+						     int argc, const char **argv) {
+
+	options->flags = 0;
+	options->terminfo_path = NULL;
+
+	int opt;
+	while ((opt = getopt(argc, (char *const *)argv, "ht:")) != -1) {
+		switch (opt) {
+
+			/* help */
+			case 'h':
+				options->flags |= BAKEY_POSIX_OPTION_FLAG_HELP;
+				print_help(argv[0]);
+				return BAKEY_RESULT_SUCCESS;
+
+			/* terminfo path */
+			case 't':
+				options->terminfo_path = optarg;
+				break;
+
+			default:
+				print_usage(argv[0]);
+				return BAKEY_RESULT_FAILURE;
+		}
+	}
+	return BAKEY_RESULT_SUCCESS;
+}

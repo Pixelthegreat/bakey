@@ -761,7 +761,14 @@ static void draw_frame(struct damage *damage) {
 }
 
 /* run application */
-static int run(void) {
+static int run(int argc, const char **argv) {
+
+	bakey_posix_options_t options;
+
+	if (bakey_posix_parse_arguments(&options, argc, argv) != BAKEY_RESULT_SUCCESS)
+		return 1;
+	if (options.flags & BAKEY_POSIX_OPTION_FLAG_HELP)
+		return 0;
 
 #ifdef BAKEY_RC
 	if (load_config() < 0)
@@ -775,7 +782,6 @@ static int run(void) {
 	action.sa_handler = sigh_alrm;
 	sigemptyset(&action.sa_mask);
 	action.sa_flags = 0;
-	action.sa_restorer = NULL;
 
 	if (sigaction(SIGALRM, &action, NULL)) {
 
@@ -785,12 +791,23 @@ static int run(void) {
 
 	/* configure environment */
 	setenv("TERM", "vt100-bakey", 1);
-#ifdef DEBUG
-	static char termpathbuf[PATH_MAX];
-	realpath("./terminfo", termpathbuf);
 
-	setenv("TERMINFO", termpathbuf, 1);
+	const char *terminfo_path = NULL;
+#ifdef DEBUG
+	terminfo_path = "./terminfo";
 #endif
+	if (options.terminfo_path)
+		terminfo_path = options.terminfo_path;
+
+	static char termpathbuf[PATH_MAX];
+	if (terminfo_path) {
+
+		realpath(terminfo_path, termpathbuf);
+		setenv("TERMINFO", termpathbuf, 1);
+	}
+
+	setenv("COLORS", "256", 1);
+	setenv("COLORTERM", "truecolor", 1);
 
 	/* connect to wayland server */
 	width = bakey_wl_config.width;
@@ -1116,9 +1133,9 @@ static void cleanup(void) {
 	if (wl_display) wl_display_disconnect(wl_display);
 }
 
-int main() {
+int main(int argc, const char **argv) {
 
-	int code = run();
+	int code = run(argc, argv);
 	cleanup();
 	return code;
 }

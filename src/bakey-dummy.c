@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <pty.h>
 
 #define BAKEY_CONFIG_IMPL
 #include <bakey-config.h>

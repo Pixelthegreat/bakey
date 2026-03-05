@@ -47,6 +47,14 @@ newoption {
 	value = 'PREFIX',
 	description = 'Installation prefix (default is /usr)',
 }
+bakey_prefix = _OPTIONS['prefix'] or '/usr'
+
+newoption {
+	trigger = 'destdir',
+	value = 'DESTDIR',
+	description = 'Installation directory (default is /)',
+}
+bakey_destdir = _OPTIONS['destdir'] or ''
 
 -- Implementations --
 bakey_enable_implementations = {'dummy', 'reference', 'sdl', 'wl'}
@@ -61,6 +69,25 @@ if _OPTIONS['enable-implementations'] then
 	bakey_enable_implementations = split(_OPTIONS['enable-implementations'], ',')
 end
 
+-- Actions --
+function action_install()
+
+	destination = bakey_destdir .. bakey_prefix
+
+	implementations = ''
+	for _, impl in ipairs(bakey_enable_implementations) do
+		implementations = implementations .. ' ' .. impl
+	end
+
+	os.execute(string.format('./tools/install.sh \'%s\' \'%s\'', implementations, destination))
+end
+
+newaction {
+	trigger = 'install',
+	description = 'Install Bakey to DESTDIR/PREFIX (See --prefix and --destdir)',
+	execute = action_install,
+}
+
 -- Global configurations --
 language 'C'
 cdialect 'C99'
@@ -69,8 +96,7 @@ objdir 'obj'
 libdirs {'lib'}
 defines {'_XOPEN_SOURCE=700'}
 
-bakey_prefix = string.format('BAKEY_PREFIX="%s"', _OPTIONS['prefix'] or '/usr')
-defines {bakey_prefix}
+defines {string.format('BAKEY_PREFIX="%s"', bakey_prefix)}
 
 filter 'configurations:debug'
 	defines {'DEBUG'}

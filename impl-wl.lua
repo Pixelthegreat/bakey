@@ -16,3 +16,6 @@ project 'bakey-wl'
 	filter 'options:enable-bakey-rc'
 		links {'bakey-rc'}
 		defines {'BAKEY_RC'}
+
+	filter 'options:enable-wl-double-buffering'
+		defines {'BAKEY_WL_BUFFER_COUNT=2'}
