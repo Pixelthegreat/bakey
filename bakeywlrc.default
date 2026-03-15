@@ -49,5 +49,5 @@ wl_background = #0e0f10
 wl_font_face = /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
 wl_font_size = 10.7
 
-wl_locale = en_US.UTF8
+wl_locale = en_US.UTF-8
 wl_shell = bash

@@ -648,6 +648,12 @@ static int run(int argc, const char **argv) {
 	fwidth = ft_face->glyph->advance.x >> 6;
 	fheight = ft_face->size->metrics.height >> 6;
 
+	if (*bakey_sdl_config.locale &&
+	    (!memcmp(bakey_sdl_config.locale, "zh", 2) ||
+	     !memcmp(bakey_sdl_config.locale, "ja", 2) ||
+	     !memcmp(bakey_sdl_config.locale, "ko", 2)))
+		fwidth *= 2;
+
 	/* load font texture */
 	if (load_font_texture() < 0)
 		return 1;

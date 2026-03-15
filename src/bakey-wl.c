@@ -24,6 +24,7 @@
 #include <xkbcommon/xkbcommon.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <beetype.h>
 
 #define BAKEY_CONFIG_IMPL
 #include <bakey-config.h>
@@ -89,13 +90,9 @@ static size_t shm_size;
 static FT_Library ft_library;
 static bool init_ft_library = false;
 static FT_Face ft_face;
+static bt_font_t *bt_font;
 
 static bool frame_ready = false;
-
-/* glyph cache */
-static uint8_t *glyph_cache;
-static size_t glyph_count;
-static uint8_t *glyph_write;
 
 /* bakey context */
 static bakey_display_t display;
@@ -455,62 +452,6 @@ static void keyboard_repeat_info(void *data, struct wl_keyboard *keyboard, int r
 	key_repeat_delay = (uint64_t)delay * 1000000;
 }
 
-/* load glyph cache data */
-static int load_glyph_cache(void) {
-
-	glyph_count = (size_t)ft_face->num_glyphs;
-	glyph_cache = (uint8_t *)malloc(fwidth * fheight * glyph_count * 4);
-	glyph_write = (uint8_t *)malloc(fwidth * fheight * 4);
-
-	if (!glyph_cache || !glyph_write) {
-
-		fprintf(stderr, "Can't allocate glyph cache\n");
-		return -1;
-	}
-	memset(glyph_cache, 0, fwidth * fheight * glyph_count * 4);
-
-	/* render glyphs */
-	for (size_t i = 1; i < glyph_count; i++) {
-
-		uint8_t *data = glyph_cache + i * fwidth * fheight * 4;
-
-		if (FT_Load_Glyph(ft_face, (FT_UInt)i, FT_LOAD_DEFAULT))
-			continue;
-
-		if (FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL))
-			continue;
-
-		size_t x = ft_face->glyph->bitmap_left;
-		if (x >= fwidth) continue;
-
-		size_t w = ft_face->glyph->bitmap.width;
-		if (x+w > fwidth) w = fwidth - x;
-
-		size_t y = ft_face->size->metrics.y_ppem -
-			   ft_face->glyph->bitmap_top;
-		if (y >= fheight) continue;
-
-		size_t h = ft_face->glyph->bitmap.rows;
-		if (y+h > fheight) h = fheight - y;
-
-		for (size_t py = 0; py < h; py++) {
-			for (size_t px = 0; px < w; px++) {
-
-				uint8_t value = ft_face->glyph->bitmap.buffer[py *
-					ft_face->glyph->bitmap.pitch + px];
-
-				size_t index = ((y+py) * fwidth + x+px) * 4;
-
-				data[index] = value;
-				data[index + 1] = value;
-				data[index + 2] = value;
-				data[index + 3] = 0xff;
-			}
-		}
-	}
-	return 0;
-}
-
 /* frame callback listener */
 static void frame_done(void *data, struct wl_callback *callback, uint32_t time);
 
@@ -615,53 +556,43 @@ static uint8_t blend_table[BLEND_TABLE_SIZE * 4];
 
 static void draw_character(size_t x, size_t y, int cc, bakey_color_t bg, bakey_color_t fg) {
 
+	fill_area(x, y, fwidth, fheight, bg);
+
 	FT_UInt index = FT_Get_Char_Index(ft_face, cc);
+	if (!index) return;
 
-	if (!index) {
+	const bt_glyph_t *glyph = bt_font_load_glyph(bt_font, index);
+	if (!glyph) {
 
-		fill_area(x, y, fwidth, fheight, bg);
+		fprintf(stderr, "Can't load BeeType glyph: %s\n", bt_get_error());
 		return;
 	}
 
-	/* update blend table */
-	if (bg != blend_bg || fg != blend_fg) {
+	/* determine how much we can render */
+	x += (size_t)glyph->x;
+	y += (size_t)ft_face->size->metrics.y_ppem - (size_t)glyph->y;
 
-		uint8_t bgv[4] = {
-			bg & 0xff,
-			(bg >> 8) & 0xff,
-			(bg >> 16) & 0xff,
-			0xff,
-		};
-		uint8_t fgv[4] = {
-			fg & 0xff,
-			(fg >> 8) & 0xff,
-			(fg >> 16) & 0xff,
-			0xff,
-		};
+	size_t gwidth = glyph->width;
+	size_t gheight = glyph->height;
 
-		for (uint32_t i = 0; i < sizeof(blend_table); i++) {
+	if (x >= width || y >= height)
+		return;
+	if (x + gwidth > width) gwidth = width - x;
+	if (y + gheight > height) gheight = height - y;
 
-			size_t j = i >> 2;
-			blend_table[i] = (bgv[i & 0x3] * (BLEND_TABLE_SIZE - j) >> (8 - BLEND_TABLE_SHIFT)) +
-					 (fgv[i & 0x3] * j >> (8 - BLEND_TABLE_SHIFT));
-		}
+	/* render glyph */
+	const uint8_t *rdata = bt_font_render_glyph_basic(bt_font, glyph, bg, fg);
 
-		blend_bg = bg;
-		blend_fg = fg;
+	if (!rdata) {
+
+		fprintf(stderr, "Can't render BeeType glyph: %s\n", bt_get_error());
+		return;
 	}
 
-	size_t size = fwidth * fheight * 4;
-	const uint8_t *rdata = glyph_cache + (size_t)index * size;
+	uint8_t *wdata = shm_data + (y * width + x) * 4;
 
-	uint8_t *wdata = glyph_write;
-	for (size_t i = 0; i < size; i++, wdata++, rdata++)
-		*wdata = blend_table[((*rdata) >> BLEND_TABLE_SHIFT) * 4 + (i & 0x3)];
-
-	wdata = shm_data + (y * width + x) * 4;
-	rdata = glyph_write;
-
-	for (size_t i = 0; i < fheight; i++, wdata += width * 4, rdata += fwidth * 4)
-		memcpy(wdata, rdata, fwidth * 4);
+	for (size_t i = 0; i < gheight; i++, wdata += width * 4, rdata += glyph->width * 4)
+		memcpy(wdata, rdata, gwidth * 4);
 }
 
 /* draw frame */
@@ -899,7 +830,7 @@ static int run(int argc, const char **argv) {
 
 	if (update_frame() < 0) return 1;
 
-	/* initialize freetype */
+	/* initialize freetype and beetype */
 	if (FT_Init_FreeType(&ft_library)) {
 
 		fprintf(stderr, "Can't initialize FreeType\n");
@@ -913,6 +844,18 @@ static int run(int argc, const char **argv) {
 		return 1;
 	}
 
+	bt_font_attributes_t font_attributes = {
+		.size = bakey_wl_config.font_size,
+		.flags = 0,
+	};
+	bt_font = bt_font_create(ft_face, &font_attributes, BT_FORMAT_BGRA32);
+	if (!bt_font) {
+
+		fprintf(stderr, "Can't create BeeType font cache: %s\n", bt_get_error());
+		return 1;
+	}
+
+	/* determine font size */
 	if (FT_Set_Char_Size(ft_face, 0, (FT_F26Dot6)(bakey_wl_config.font_size * 64.f), 96, 96)) {
 
 		fprintf(stderr, "Can't set FreeType font size\n");
@@ -923,15 +866,14 @@ static int run(int argc, const char **argv) {
 	FT_Load_Glyph(ft_face, index, FT_LOAD_DEFAULT);
 	FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL);
 
-	fwidth = (size_t)(ft_face->glyph->bitmap_left + ft_face->glyph->bitmap.width);
-	fheight = (size_t)(ft_face->glyph->bitmap.rows + ft_face->size->metrics.y_ppem - ft_face->glyph->bitmap_top);
-
 	fwidth = ft_face->glyph->advance.x >> 6;
 	fheight = ft_face->size->metrics.height >> 6;
 
-	/* load glyph cache */
-	if (load_glyph_cache() < 0)
-		return 1;
+	if (*bakey_wl_config.locale &&
+	    (!memcmp(bakey_wl_config.locale, "zh", 2) ||
+	     !memcmp(bakey_wl_config.locale, "ja", 2) ||
+	     !memcmp(bakey_wl_config.locale, "ko", 2)))
+		fwidth *= 2;
 
 	/* initialize bakey */
 	display.width = width / fwidth;
@@ -1121,8 +1063,7 @@ static void cleanup(void) {
 
 	if (shell_pid >= 0) kill(shell_pid, SIGKILL);
 	if (context.init) bakey_close(&context);
-	if (glyph_write) free(glyph_write);
-	if (glyph_cache) free(glyph_cache);
+	if (bt_font) bt_font_destroy(bt_font);
 	if (init_ft_library) FT_Done_FreeType(ft_library);
 	if (xkb_state) xkb_state_unref(xkb_state);
 	if (xkb_keymap) xkb_keymap_unref(xkb_keymap);

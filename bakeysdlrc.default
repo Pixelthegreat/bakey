@@ -54,5 +54,5 @@ sdl_cursor_mode = inverted
 sdl_cursor_flash_interval = 0.625
 sdl_cursor_flash_count = 8
 
-sdl_locale = en_US.UTF8
+sdl_locale = en_US.UTF-8
 sdl_shell = bash

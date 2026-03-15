@@ -7,7 +7,7 @@ project 'bakey-wl'
 	       'include/bakey-xdg-shell.h'}
 	optimize 'Speed'
 	buildoptions {'`pkg-config --cflags freetype2`'}
-	links {'bakey', 'bakey-posix', 'wayland-client', 'xkbcommon'}
+	links {'bakey', 'bakey-posix', 'beetype', 'wayland-client', 'xkbcommon'}
 	linkoptions {'`pkg-config --libs freetype2`'}
 	targetdir 'bin'
 
