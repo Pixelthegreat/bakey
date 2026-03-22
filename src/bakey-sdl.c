@@ -317,48 +317,43 @@ static void process_key(SDL_Event *event) {
 
 			if (wc) bakey_send_character(&context, wc);
 		}
-
-		return;
 	}
 	else if (event->key.keysym.sym == SDLK_LSHIFT ||
-		 event->key.keysym.sym == SDLK_RSHIFT) {
-
+		 event->key.keysym.sym == SDLK_RSHIFT)
 		shifted = (event->type == SDL_KEYDOWN);
-		return;
-	}
+
 	else if (event->key.keysym.sym == SDLK_LCTRL ||
-		 event->key.keysym.sym == SDLK_RCTRL) {
-
+		 event->key.keysym.sym == SDLK_RCTRL)
 		ctrled = (event->type == SDL_KEYDOWN);
-		return;
-	}
-	else if (event->type != SDL_KEYDOWN)
-		return;
 
-	switch (event->key.keysym.sym) {
+	else if (event->type != SDL_KEYDOWN);
 
-		/* generic key */
-		case SDLK_BACKSPACE: bakey_send_character(&context, '\x7f'); break;
-		case SDLK_TAB: bakey_send_character(&context, '\t'); break;
-		case SDLK_RETURN: bakey_send_character(&context, '\r'); break;
-		case SDLK_ESCAPE: bakey_send_character(&context, '\x1b'); break;
-		case SDLK_UP: bakey_send_sequence(&context, L"\x1b[A"); break;
-		case SDLK_DOWN: bakey_send_sequence(&context, L"\x1b[B"); break;
-		case SDLK_RIGHT: bakey_send_sequence(&context, L"\x1b[C"); break;
-		case SDLK_LEFT: bakey_send_sequence(&context, L"\x1b[D"); break;
+	else {
+		switch (event->key.keysym.sym) {
 
-		/* control modifier */
-		default:
-			if (ctrled) {
+			/* generic key */
+			case SDLK_BACKSPACE: bakey_send_character(&context, '\x7f'); break;
+			case SDLK_TAB: bakey_send_character(&context, '\t'); break;
+			case SDLK_RETURN: bakey_send_character(&context, '\r'); break;
+			case SDLK_ESCAPE: bakey_send_character(&context, '\x1b'); break;
+			case SDLK_UP: bakey_send_sequence(&context, L"\x1b[A"); break;
+			case SDLK_DOWN: bakey_send_sequence(&context, L"\x1b[B"); break;
+			case SDLK_RIGHT: bakey_send_sequence(&context, L"\x1b[C"); break;
+			case SDLK_LEFT: bakey_send_sequence(&context, L"\x1b[D"); break;
 
-				SDL_Keycode sym = event->key.keysym.sym;
-				if (sym >= SDLK_a && sym <= SDLK_z) {
+			/* control modifier */
+			default:
+				if (ctrled) {
 
-					sym -= SDLK_a-1;
-					bakey_send_character(&context, (wchar_t)sym);
+					SDL_Keycode sym = event->key.keysym.sym;
+					if (sym >= SDLK_a && sym <= SDLK_z) {
+
+						sym -= SDLK_a-1;
+						bakey_send_character(&context, (wchar_t)sym);
+					}
 				}
-			}
-			break;
+				break;
+		}
 	}
 
 	if (context.display_updated) {
