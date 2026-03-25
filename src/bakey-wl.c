@@ -402,6 +402,12 @@ static void process_key(xkb_keysym_t keysym, uint32_t code, uint32_t state) {
 		case XKB_KEY_Down: bakey_send_sequence(&context, L"\x1b[B"); return;
 		case XKB_KEY_Right: bakey_send_sequence(&context, L"\x1b[C"); return;
 		case XKB_KEY_Left: bakey_send_sequence(&context, L"\x1b[D"); return;
+		case XKB_KEY_Home: bakey_send_sequence(&context, L"\x1b[H"); return;
+		case XKB_KEY_End: bakey_send_sequence(&context, L"\x1b[F"); return;
+		case XKB_KEY_Page_Up: bakey_send_sequence(&context, L"\x1b[5~"); return;
+		case XKB_KEY_Page_Down: bakey_send_sequence(&context, L"\x1b[6~"); return;
+		case XKB_KEY_Insert: bakey_send_sequence(&context, L"\x1b[2~"); return;
+		case XKB_KEY_Delete: bakey_send_sequence(&context, L"\x1b[3~"); return;
 	}
 
 	if (code) bakey_send_character(&context, code);

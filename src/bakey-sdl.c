@@ -340,6 +340,12 @@ static void process_key(SDL_Event *event) {
 			case SDLK_DOWN: bakey_send_sequence(&context, L"\x1b[B"); break;
 			case SDLK_RIGHT: bakey_send_sequence(&context, L"\x1b[C"); break;
 			case SDLK_LEFT: bakey_send_sequence(&context, L"\x1b[D"); break;
+			case SDLK_HOME: bakey_send_sequence(&context, L"\x1b[H"); break;
+			case SDLK_END: bakey_send_sequence(&context, L"\x1b[F"); break;
+			case SDLK_PAGEUP: bakey_send_sequence(&context, L"\x1b[5~"); break;
+			case SDLK_PAGEDOWN: bakey_send_sequence(&context, L"\x1b[6~"); break;
+			case SDLK_INSERT: bakey_send_sequence(&context, L"\x1b[2~"); break;
+			case SDLK_DELETE: bakey_send_sequence(&context, L"\x1b[3~"); break;
 
 			/* control modifier */
 			default:
