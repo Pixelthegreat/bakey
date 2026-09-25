@@ -369,6 +369,59 @@ static void process_key(SDL_Event *event) {
 	}
 }
 
+/* process button event */
+static void process_button(SDL_Event *event) {
+
+	bool pressed = event->button.state == SDL_PRESSED;
+
+	bakey_mouse_button_t button;
+	switch (event->button.button) {
+
+		case SDL_BUTTON_LEFT: button = BAKEY_MOUSE_BUTTON_LEFT; break;
+		case SDL_BUTTON_MIDDLE: button = BAKEY_MOUSE_BUTTON_MIDDLE; break;
+		case SDL_BUTTON_RIGHT: button = BAKEY_MOUSE_BUTTON_RIGHT; break;
+		default: return;
+	}
+	bakey_send_mouse_button(
+			&context,
+			(size_t)event->button.x / fwidth,
+			(size_t)event->button.y / fheight,
+			button,
+			pressed,
+			0
+	);
+
+	if (context.display_updated) {
+
+		reset_cursor();
+		display_updated = true;
+	}
+}
+
+/* process wheel / scroll event */
+static void process_wheel(SDL_Event *event) {
+
+	if (!event->wheel.y) return;
+
+	bakey_mouse_button_t button = BAKEY_MOUSE_BUTTON_SCROLL_UP;
+	if (event->wheel.y < 0) button = BAKEY_MOUSE_BUTTON_SCROLL_DOWN;
+
+	bakey_send_mouse_button(
+			&context,
+			(size_t)event->wheel.mouseX / fwidth,
+			(size_t)event->wheel.mouseY / fheight,
+			button,
+			true,
+			0
+	);
+
+	if (context.display_updated) {
+
+		reset_cursor();
+		display_updated = true;
+	}
+}
+
 /* set color to bakey color */
 static void set_color(bakey_color_t color, bool set_texture_mod) {
 
@@ -748,6 +801,13 @@ static int run(int argc, const char **argv) {
 					 event.type == SDL_KEYUP ||
 					 event.type == SDL_TEXTINPUT)
 					process_key(&event);
+
+				else if (event.type == SDL_MOUSEBUTTONDOWN ||
+					 event.type == SDL_MOUSEBUTTONUP)
+					process_button(&event);
+
+				else if (event.type == SDL_MOUSEWHEEL)
+					process_wheel(&event);
 
 				else if (event.type == SDL_WINDOWEVENT &&
 					 event.window.event == SDL_WINDOWEVENT_RESIZED)

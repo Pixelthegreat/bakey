@@ -66,6 +66,7 @@ static struct wl_surface *wl_surface;
 static struct xdg_surface *xdg_surface;
 static struct xdg_toplevel *xdg_toplevel;
 static struct wl_keyboard *wl_keyboard;
+static struct wl_pointer *wl_pointer;
 static struct wl_callback *wl_callback_frame;
 
 static struct xkb_context *xkb_context;
@@ -80,6 +81,7 @@ static uint64_t key_repeat_time;
 static size_t key_repeat_count;
 static uint64_t key_repeat_rate = 25000000;
 static uint64_t key_repeat_delay = 500000000;
+static int32_t pointer_x = 0, pointer_y = 0;
 
 static struct wl_shm_pool *wl_shm_pool;
 static struct wl_buffer *wl_buffer_shm;
@@ -458,6 +460,69 @@ static void keyboard_repeat_info(void *data, struct wl_keyboard *keyboard, int r
 	key_repeat_delay = (uint64_t)delay * 1000000;
 }
 
+/* pointer listener */
+static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t id, struct wl_surface *surface, int32_t surface_x, int32_t surface_y);
+static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t id, struct wl_surface *surface);
+static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, int32_t surface_x, int32_t surface_y);
+static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t id, uint32_t time, uint32_t button, uint32_t state);
+static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, int32_t value);
+
+static struct wl_pointer_listener pointer_listener = {
+	.enter = pointer_enter,
+	.leave = pointer_leave,
+	.motion = pointer_motion,
+	.button = pointer_button,
+	.axis = pointer_axis,
+};
+
+/* enter surface */
+static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t id, struct wl_surface *surface, int32_t surface_x, int32_t surface_y) {
+
+	pointer_x = surface_x;
+	pointer_y = surface_y;
+}
+
+/* leave surface */
+static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t id, struct wl_surface *surface) {
+}
+
+/* pointer motion */
+static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, int32_t surface_x, int32_t surface_y) {
+
+	pointer_x = surface_x;
+	pointer_y = surface_y;
+}
+
+/* pointer button */
+static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t id, uint32_t time, uint32_t button, uint32_t state) {
+
+	bakey_mouse_button_t new_button;
+	switch (button) {
+
+		case 0x110: new_button = BAKEY_MOUSE_BUTTON_LEFT; break;
+		case 0x111: new_button = BAKEY_MOUSE_BUTTON_RIGHT; break;
+		case 0x112: new_button = BAKEY_MOUSE_BUTTON_MIDDLE; break;
+		default: return;
+	}
+	bakey_send_mouse_button(
+		&context,
+		(size_t)(pointer_x >> 8) / fwidth,
+		(size_t)(pointer_y >> 8) / fheight,
+		new_button,
+		state > 0,
+		0
+	);
+	if (context.display_updated) {
+
+		reset_cursor();
+		display_updated = true;
+	}
+}
+
+/* pointer axis */
+static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, int32_t value) {
+}
+
 /* frame callback listener */
 static void frame_done(void *data, struct wl_callback *callback, uint32_t time);
 
@@ -825,6 +890,13 @@ static int run(int argc, const char **argv) {
 		return 1;
 	}
 
+	wl_pointer = wl_seat_get_pointer(wl_seat);
+	if (!wl_seat) {
+
+		fprintf(stderr, "Can't get Wayland pointer");
+		return 1;
+	}
+
 	xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (!xkb_context) {
 
@@ -833,6 +905,7 @@ static int run(int argc, const char **argv) {
 	}
 
 	wl_keyboard_add_listener(wl_keyboard, &keyboard_listener, NULL);
+	wl_pointer_add_listener(wl_pointer, &pointer_listener, NULL);
 
 	if (update_frame() < 0) return 1;
 

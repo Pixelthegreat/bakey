@@ -3,12 +3,16 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+#ifndef BAKEY_FREESTANDING
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-#include <ctype.h>
+#include <wchar.h>
 #include <wctype.h>
+#endif /* BAKEY_FREESTANDING */
+
+#include <stdarg.h>
+
 #include <bakey-config.h>
 #include <bakey.h>
 
@@ -17,6 +21,133 @@
 #define ERRBUFSZ 1024
 static char errbuf[ERRBUFSZ];
 static bool errset = false;
+
+/* freestanding implementations and prototypes */
+#ifdef BAKEY_FREESTANDING
+
+#define MB_CUR_MAX 8
+
+extern void *memmove(void *dest, const void *src, size_t n);
+extern void *memcpy(void *dest, const void *src, size_t n);
+extern int memcmp(const void *s1, const void *s2, size_t n);
+extern void *memset(void *s, int c, size_t n);
+extern char *strchr(const char *s, int c);
+extern size_t strlen(const char *s);
+extern int snprintf(char *str, size_t size, const char *restrict format, ...);
+extern int vsnprintf(char *str, size_t size, const char *restrict format, va_list ap);
+
+static int _chrlen(wchar_t wc) {
+
+	if (wc < 128) return 1;
+	else if (wc < 2048) return 2;
+	else if (wc < 65536) return 3;
+	else if (wc < 2097152) return 4;
+	else return -1;
+}
+
+static int wctomb(char *s, wchar_t wc) {
+
+	int len = _chrlen(wc);
+	if (len < 0) return -1;
+
+	if (len == 4) {
+
+		*s++ = (char)(((wc >> 18) & 0x7) | 0b11110000);
+		*s++ = (char)(((wc >> 12) & 0x3f) | 0b10000000);
+		*s++ = (char)(((wc >> 6) & 0x3f) | 0b10000000);
+		*s++ = (char)((wc & 0x3f) | 0b10000000);
+	}
+	else if (len == 3) {
+
+		*s++ = (char)(((wc >> 12) & 0xf) | 0b11100000);
+		*s++ = (char)(((wc >> 6) & 0x3f) | 0b10000000);
+		*s++ = (char)((wc & 0x3f) | 0b10000000);
+	}
+	else if (len == 2) {
+
+		*s++ = (char)(((wc >> 6) & 0x1f) | 0b11000000);
+		*s++ = (char)((wc & 0x3f) | 0b10000000);
+	}
+	else *s++ = (char)(wc & 0x7f);
+
+	return len;
+}
+
+static int mbtowc(wchar_t *pwc, const char *s, size_t n) {
+
+	wchar_t res = 0;
+	char c0 = *s++;
+	int count = 1;
+
+	if ((c0 & 0b11111000) == 0b11110000) {
+
+		char c1 = *s++;
+		char c2 = *s++;
+		char c3 = *s++;
+
+		if ((c1 & 0b11000000) != 0b10000000 ||
+		    (c2 & 0b11000000) != 0b10000000 ||
+		    (c3 & 0b11000000) != 0b10000000)
+			return -1;
+
+		res = ((wchar_t)c0 & 0x7) << 18;
+		res |= ((wchar_t)c1 & 0x3f) << 12;
+		res |= ((wchar_t)c2 & 0x3f) << 6;
+		res |= (wchar_t)c3 & 0x3f;
+
+		count = 4;
+	}
+	else if ((c0 & 0b11110000) == 0b11100000) {
+
+		char c1 = *s++;
+		char c2 = *s++;
+
+		if ((c1 & 0b11000000) != 0b10000000 ||
+		    (c2 & 0b11000000) != 0b10000000)
+			return -1;
+
+		res = ((wchar_t)c0 & 0xf) << 12;
+		res |= ((wchar_t)c1 & 0x3f) << 6;
+		res |= (wchar_t)c2 & 0x3f;
+
+		count = 3;
+	}
+	else if ((c0 & 0b11100000) == 0b11000000) {
+
+		char c1 = *s++;
+
+		if ((c1 & 0b11000000) != 0b10000000)
+			return -1;
+
+		res = ((wchar_t)c0 & 0x1f) << 6;
+		res |= (wchar_t)c1 & 0x3f;
+
+		count = 2;
+	}
+	else if ((c0 & 0b11000000) == 0b10000000)
+		return -1;
+
+	else res = (wchar_t)c0 & 0x7f;
+
+	*pwc = res;
+	return count;
+}
+
+static int mblen(const char *s, size_t n) {
+
+	if ((*s) & 0b11111000 == 0b11110000)
+		return 4;
+	else if ((*s) & 0b11110000 == 0b11100000)
+		return 3;
+	else if ((*s) & 0b11100000 == 0b11000000)
+		return 2;
+	else if ((*s) & 0b11000000 == 0b10000000)
+		return -1;
+	else
+		return 1;
+}
+
+#endif /* BAKEY_FREESTANDING */
 
 /* insert blank characters */
 static void insert_characters(bakey_context_t *context, size_t start, size_t characters) {
@@ -81,9 +212,13 @@ static void remove_characters(bakey_context_t *context, size_t start, size_t cha
 		cell->style = context->style.flags;
 	}
 
-	bakey_damage(context,
-		     0, start / display->width, display->width,
-		     size < display->width? 1: size / display->width);
+	bakey_damage(
+			context,
+			0, start / display->width,
+			display->width,
+			size < display->width? 1:
+			size / display->width
+	);
 }
 
 /* insert blank lines */
@@ -159,9 +294,9 @@ static void print_character(bakey_context_t *context, wchar_t wc) {
 #ifdef BAKEY_ESCAPE_SEQUENCE_DEBUG
 		printf("\\n\n");
 #endif
-		SCROLL_VIEW_NONCANON(context);
 		context->old_position = context->position;
 		context->position += display->width - (context->position % display->width);
+		scroll_view(context);
 	}
 
 	else if (wc == L'\r') {
@@ -940,6 +1075,62 @@ static void command_M(bakey_context_t *context, const char *sequence, size_t len
 	else context->position -= display->width;
 }
 
+/* set private mode */
+static void command_h(bakey_context_t *context, const char *sequence, size_t length) {
+
+	if (*sequence++ != '[' || *sequence++ != '?')
+		return;
+
+	int num = 0;
+	to_int(sequence, &num);
+
+	switch (num) {
+		case 9:
+			context->private_modes[BAKEY_PRIVATE_MODE_X10_MOUSE] = true;
+			break;
+		case 1000:
+			context->private_modes[BAKEY_PRIVATE_MODE_VT200_MOUSE] = true;
+			break;
+		case 1001:
+			context->private_modes[BAKEY_PRIVATE_MODE_VT200_HIGHLIGHT_MOUSE] = true;
+			break;
+		case 1002:
+			context->private_modes[BAKEY_PRIVATE_MODE_BTN_EVENT_MOUSE] = true;
+			break;
+		case 1003:
+			context->private_modes[BAKEY_PRIVATE_MODE_ANY_EVENT_MOUSE] = true;
+			break;
+	}
+}
+
+/* reset private mode */
+static void command_l(bakey_context_t *context, const char *sequence, size_t length) {
+
+	if (*sequence++ != '[' || *sequence++ != '?')
+		return;
+
+	int num = 0;
+	to_int(sequence, &num);
+
+	switch (num) {
+		case 9:
+			context->private_modes[BAKEY_PRIVATE_MODE_X10_MOUSE] = false;
+			break;
+		case 1000:
+			context->private_modes[BAKEY_PRIVATE_MODE_VT200_MOUSE] = false;
+			break;
+		case 1001:
+			context->private_modes[BAKEY_PRIVATE_MODE_VT200_HIGHLIGHT_MOUSE] = false;
+			break;
+		case 1002:
+			context->private_modes[BAKEY_PRIVATE_MODE_BTN_EVENT_MOUSE] = false;
+			break;
+		case 1003:
+			context->private_modes[BAKEY_PRIVATE_MODE_ANY_EVENT_MOUSE] = false;
+			break;
+	}
+}
+
 /* interpret escape sequence */
 static void (*command_handlers[256])(bakey_context_t *, const char *, size_t) = {
 	['A'] = command_A,
@@ -949,10 +1140,12 @@ static void (*command_handlers[256])(bakey_context_t *, const char *, size_t) = 
 	['E'] = command_E,
 	['F'] = command_F,
 	['G'] = command_G,
+	['h'] = command_h,
 	['H'] = command_H,
 	['f'] = command_H,
 	['J'] = command_J,
 	['K'] = command_K,
+	['l'] = command_l,
 	['L'] = command_L,
 	['n'] = command_n,
 	['m'] = command_m,
@@ -1216,17 +1409,30 @@ BAKEY_API bakey_result_t bakey_update(bakey_context_t *context) {
 	return BAKEY_RESULT_SUCCESS;
 }
 
-/* send */
+/* send character */
 static void add_to_writebuf(bakey_context_t *context, int ch) {
 
 	if (context->internal.write_pos < BAKEY_CONTEXT_WRITEBUFSZ)
 		context->internal.writebuf[context->internal.write_pos++] = ch;
 }
 
+BAKEY_API bool bakey_send_character_raw(bakey_context_t *context, char ch) {
+
+	if (context->internal.write_pos >= BAKEY_CONTEXT_WRITEBUFSZ - MB_CUR_MAX)
+		return false;
+	else if (!context->internal.write_pos)
+		context->internal.input_pos = context->position;
+
+	add_to_writebuf(context, ch);
+	return true;
+}
+
 BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc) {
 
 	if (!context || !context->init || context->internal.write_ready)
 		return;
+
+	char convbuf[MB_CUR_MAX+1];
 
 	/* send signal */
 	if (context->control.flags & BAKEY_CONTROL_FLAG_SIGNAL) {
@@ -1301,16 +1507,12 @@ BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc) {
 
 		/* normal character */
 		default:
-			if (context->internal.write_pos >= BAKEY_CONTEXT_WRITEBUFSZ - MB_CUR_MAX)
+			memset(convbuf, 0, sizeof(convbuf));
+			if (wctomb(convbuf, wc) < 0)
 				break;
-			else if (!context->internal.write_pos)
-				context->internal.input_pos = context->position;
 
-			buf = context->internal.writebuf + context->internal.write_pos;
-			int nwrite = wctomb(buf, wc);
-
-			if (nwrite <= 0) break;
-			context->internal.write_pos += (size_t)nwrite;
+			if (!bakey_send_sequence_raw(context, convbuf))
+				break;
 
 			if (context->control.flags & BAKEY_CONTROL_FLAG_ECHO) {
 
@@ -1326,9 +1528,59 @@ BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc) {
 }
 
 /* send character sequence */
+BAKEY_API bool bakey_send_sequence_raw(bakey_context_t *context, const char *str) {
+
+	while (*str) {
+		if (!bakey_send_character_raw(context, *str++))
+			return false;
+	}
+	return true;
+}
+
 BAKEY_API void bakey_send_sequence(bakey_context_t *context, const wchar_t *wcs) {
 
 	while (*wcs) bakey_send_character(context, *wcs++);
+}
+
+/* send mouse button event */
+BAKEY_API void bakey_send_mouse_button(
+		bakey_context_t *context,
+		size_t x, size_t y,
+		bakey_mouse_button_t button,
+		bool pressed,
+		bakey_modifier_t modifiers
+) {
+
+	if (!context || !context->init)
+		return;
+
+	if (context->private_modes[BAKEY_PRIVATE_MODE_VT200_MOUSE]) {
+
+		int code = (int)BAKEY_MOUSE_BUTTON_RELEASE;
+		if (pressed) {
+
+			code = (int)button;
+			if (button > BAKEY_MOUSE_BUTTON_RIGHT) {
+
+				button -= 4;
+				code |= 0x40;
+			}
+		}
+		else if (button > BAKEY_MOUSE_BUTTON_RIGHT)
+			return;
+
+		code |= (int)modifiers;
+
+		if (x > 222 || y > 222)
+			return;
+
+		char buf[32] = "\x1b[M   ";
+		buf[3] = (char)code+32;
+		buf[4] = (char)x+33;
+		buf[5] = (char)y+33;
+
+		bakey_send_sequence_raw(context, buf);
+	}
 }
 
 /* destroy context */

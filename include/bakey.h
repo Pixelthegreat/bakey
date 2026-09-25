@@ -82,6 +82,16 @@ typedef enum bakey_control_character {
 	BAKEY_CONTROL_CHARACTER_COUNT,
 } bakey_control_character_t;
 
+typedef enum bakey_private_mode {
+	BAKEY_PRIVATE_MODE_X10_MOUSE = 0,
+	BAKEY_PRIVATE_MODE_VT200_MOUSE,
+	BAKEY_PRIVATE_MODE_VT200_HIGHLIGHT_MOUSE,
+	BAKEY_PRIVATE_MODE_BTN_EVENT_MOUSE,
+	BAKEY_PRIVATE_MODE_ANY_EVENT_MOUSE,
+
+	BAKEY_PRIVATE_MODE_COUNT,
+} bakey_private_mode_t;
+
 #define BAKEY_CONTEXT_READBUFSZ 1024
 #define BAKEY_CONTEXT_WRITEBUFSZ 4096
 #define BAKEY_CONTEXT_SEQUENCEBUFSZ 1024
@@ -99,6 +109,7 @@ typedef struct bakey_context {
 		size_t x, y, width, height;
 		size_t position; /* position before reset */
 	} damage; /* updated / damaged region */
+	bakey_private_mode_t private_modes[BAKEY_PRIVATE_MODE_COUNT];
 	bakey_context_state_t state;
 	/*
 	 * Values set by the backend
@@ -207,6 +218,8 @@ BAKEY_API bakey_result_t bakey_update(bakey_context_t *context);
 /*
  * Send an input character to the terminal
  */
+BAKEY_API bool bakey_send_character_raw(bakey_context_t *context, char ch);
+
 BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc);
 
 /*
@@ -215,7 +228,40 @@ BAKEY_API void bakey_send_character(bakey_context_t *context, wchar_t wc);
  * This is basically the same as multiple calls to
  * bakey_send_character.
  */
+BAKEY_API bool bakey_send_sequence_raw(bakey_context_t *context, const char *str);
+
 BAKEY_API void bakey_send_sequence(bakey_context_t *context, const wchar_t *wcs);
+
+/*
+ * Send a mouse button event
+ *
+ * The x and y position are in cell coordinates, not
+ * pixel coordinates.
+ */
+typedef enum bakey_mouse_button {
+	BAKEY_MOUSE_BUTTON_LEFT = 0,
+	BAKEY_MOUSE_BUTTON_MIDDLE,
+	BAKEY_MOUSE_BUTTON_RIGHT,
+	BAKEY_MOUSE_BUTTON_RELEASE,
+	BAKEY_MOUSE_BUTTON_SCROLL_UP,
+	BAKEY_MOUSE_BUTTON_SCROLL_DOWN,
+
+	BAKEY_MOUSE_BUTTON_COUNT,
+} bakey_mouse_button_t;
+
+typedef enum bakey_modifier {
+	BAKEY_MODIFIER_SHIFT = 0x4,
+	BAKEY_MODIFIER_META = 0x8,
+	BAKEY_MODIFIER_CONTROL = 0x10,
+} bakey_modifier_t;
+
+BAKEY_API void bakey_send_mouse_button(
+		bakey_context_t *context,
+		size_t x, size_t y,
+		bakey_mouse_button_t button,
+		bool pressed,
+		bakey_modifier_t modifiers
+);
 
 /*
  * Close terminal

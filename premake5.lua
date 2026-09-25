@@ -43,6 +43,11 @@ newoption {
 }
 
 newoption {
+	trigger = 'enable-freestanding',
+	description = 'Disable usage of most of libc in Bakey core (useful for freestanding ports)',
+}
+
+newoption {
 	trigger = 'prefix',
 	value = 'PREFIX',
 	description = 'Installation prefix (default is /usr/local)',
@@ -91,6 +96,9 @@ project 'bakey'
 
 	filter 'options:enable-escape-sequence-debug'
 		defines {'BAKEY_ESCAPE_SEQUENCE_DEBUG'}
+
+	filter 'options:enable-freestanding'
+		defines {'BAKEY_FREESTANDING'}
 
 -- Bakey RC extension --
 project 'bakey-rc'
